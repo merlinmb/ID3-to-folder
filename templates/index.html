@@ -1,0 +1,668 @@
+<!DOCTYPE html>
+<html lang="en" data-bs-theme="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>ID3 Music Organiser</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet" />
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css" rel="stylesheet" />
+  <style>
+    /* ── Base ─────────────────────────────────────────────────────── */
+    :root {
+      --accent:       #7c3aed;
+      --accent-light: #a78bfa;
+      --bg-base:      #0d0d12;
+      --bg-card:      #13131c;
+      --bg-row:       #18182a;
+      --bg-row-alt:   #141420;
+      --border:       #2a2a45;
+    }
+    body            { background: var(--bg-base); font-size: .85rem; color: #cbd5e1; }
+    a               { color: var(--accent-light); }
+
+    /* ── Header ──────────────────────────────────────────────────── */
+    .app-header {
+      background: linear-gradient(135deg, #0d0d12 0%, #1a103a 100%);
+      border-bottom: 1px solid var(--border);
+      padding: 1rem 1.5rem .8rem;
+    }
+    .app-header h1 { font-size: 1.3rem; font-weight: 700; color: var(--accent-light); margin: 0; }
+    .app-header .subtitle { font-size: .75rem; color: #64748b; }
+
+    /* ── Stat cards ──────────────────────────────────────────────── */
+    .stat-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: .5rem;
+      padding: .8rem 1.2rem;
+      text-align: center;
+    }
+    .stat-card .value { font-size: 1.7rem; font-weight: 700; line-height: 1; }
+    .stat-card .label { font-size: .7rem; color: #64748b; text-transform: uppercase; letter-spacing: .05em; margin-top: .2rem; }
+    .stat-total   .value { color: #94a3b8; }
+    .stat-matched .value { color: #4ade80; }
+    .stat-unmatched .value { color: #facc15; }
+    .stat-moved   .value { color: #60a5fa; }
+    .stat-errors  .value { color: #f87171; }
+    .stat-pending .value { color: #c084fc; }
+
+    /* ── Filter bar ──────────────────────────────────────────────── */
+    .filter-bar {
+      background: var(--bg-card);
+      border-bottom: 1px solid var(--border);
+      padding: .6rem 1rem;
+      display: flex;
+      flex-wrap: wrap;
+      gap: .5rem;
+      align-items: center;
+    }
+    .filter-bar .form-control,
+    .filter-bar .form-select {
+      background: #1e1e30;
+      border-color: var(--border);
+      color: #cbd5e1;
+      font-size: .82rem;
+    }
+    .filter-bar .form-control:focus,
+    .filter-bar .form-select:focus {
+      border-color: var(--accent);
+      box-shadow: 0 0 0 .15rem rgba(124,58,237,.25);
+    }
+    .filter-bar .input-group-text {
+      background: #1e1e30;
+      border-color: var(--border);
+      color: #64748b;
+    }
+
+    /* ── Action bar ──────────────────────────────────────────────── */
+    .action-bar {
+      background: #0f0f1a;
+      border-bottom: 1px solid var(--border);
+      padding: .5rem 1rem;
+      display: flex;
+      gap: .5rem;
+      align-items: center;
+      flex-wrap: wrap;
+    }
+    .action-bar .selected-count { color: #64748b; font-size: .8rem; margin-left: .5rem; }
+
+    /* ── Table ───────────────────────────────────────────────────── */
+    .table-wrap { overflow-x: auto; }
+    table.tracks-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: .8rem;
+    }
+    .tracks-table thead th {
+      background: #0f0f1a;
+      border-bottom: 1px solid var(--border);
+      color: #64748b;
+      font-weight: 600;
+      text-transform: uppercase;
+      font-size: .68rem;
+      letter-spacing: .07em;
+      padding: .55rem .7rem;
+      white-space: nowrap;
+      position: sticky;
+      top: 0;
+      z-index: 10;
+    }
+    .tracks-table tbody tr {
+      border-bottom: 1px solid #1b1b2e;
+      transition: background .12s;
+    }
+    .tracks-table tbody tr:hover { background: #1c1c30; }
+    .tracks-table tbody tr.selected { background: #1a1040; }
+    .tracks-table td {
+      padding: .45rem .7rem;
+      vertical-align: middle;
+    }
+    .tracks-table td.ellipsis {
+      max-width: 180px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .tracks-table td.path-col { max-width: 280px; }
+
+    /* ── Status badges ────────────────────────────────────────────── */
+    .badge-pending   { color: #c084fc; }
+    .badge-moved     { color: #4ade80; }
+    .badge-error     { color: #f87171; }
+    .badge-moving    { color: #60a5fa; }
+
+    /* ── Inline destination editor ───────────────────────────────── */
+    .dest-cell {
+      display: flex;
+      align-items: center;
+      gap: .4rem;
+      min-width: 240px;
+      max-width: 380px;
+    }
+    .dest-display {
+      flex: 1;
+      font-family: monospace;
+      font-size: .78rem;
+      color: #94a3b8;
+      cursor: pointer;
+      padding: .2rem .35rem;
+      border-radius: .3rem;
+      border: 1px solid transparent;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .dest-display:hover { border-color: var(--accent); background: #1e1040; }
+    .dest-input {
+      flex: 1;
+      font-family: monospace;
+      font-size: .78rem;
+      background: #1a1040;
+      border: 1px solid var(--accent);
+      color: #e2e8f0;
+      border-radius: .3rem;
+      padding: .2rem .4rem;
+      outline: none;
+      display: none;
+    }
+    .dest-input:focus { box-shadow: 0 0 0 .12rem rgba(124,58,237,.3); }
+
+    /* ── Pagination ──────────────────────────────────────────────── */
+    .pagination-bar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: .5rem 1rem;
+      border-top: 1px solid var(--border);
+      font-size: .8rem;
+      color: #64748b;
+    }
+
+    /* ── Progress modal ──────────────────────────────────────────── */
+    .modal-content {
+      background: #13131c;
+      border: 1px solid var(--border);
+    }
+    .modal-header { border-bottom: 1px solid var(--border); }
+    .modal-footer { border-top: 1px solid var(--border); }
+
+    #moveLog {
+      max-height: 280px;
+      overflow-y: auto;
+      font-family: monospace;
+      font-size: .78rem;
+      background: #0d0d12;
+      border: 1px solid var(--border);
+      border-radius: .35rem;
+      padding: .6rem .8rem;
+    }
+    .log-ok    { color: #4ade80; }
+    .log-err   { color: #f87171; }
+    .log-info  { color: #60a5fa; }
+    .log-dim   { color: #475569; }
+
+    /* ── Misc ────────────────────────────────────────────────────── */
+    .btn-icon { padding: .2rem .4rem; font-size: .8rem; line-height: 1; }
+    .spinner-sm { width: 1rem; height: 1rem; }
+    #noResults { color: #475569; text-align: center; padding: 3rem; }
+
+    /* Scrollbar */
+    ::-webkit-scrollbar { width: 6px; height: 6px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: #2a2a45; border-radius: 3px; }
+  </style>
+</head>
+<body>
+
+<!-- ── Header ─────────────────────────────────────────────────────────────── -->
+<div class="app-header d-flex align-items-center justify-content-between">
+  <div>
+    <h1><i class="bi bi-music-note-beamed me-2"></i>ID3 Music Organiser</h1>
+    <div class="subtitle">Review proposed file moves and trigger them when ready.</div>
+  </div>
+  <button class="btn btn-sm btn-outline-secondary" onclick="loadStats(); loadTracks()">
+    <i class="bi bi-arrow-clockwise me-1"></i>Refresh
+  </button>
+</div>
+
+<!-- ── Stats row ──────────────────────────────────────────────────────────── -->
+<div class="p-3 border-bottom" style="border-color: var(--border) !important; background: var(--bg-card);">
+  <div class="row g-2" id="statsRow">
+    <div class="col"><div class="stat-card stat-total">  <div class="value" id="sTot">–</div><div class="label">Total</div></div></div>
+    <div class="col"><div class="stat-card stat-matched"><div class="value" id="sMat">–</div><div class="label">Matched</div></div></div>
+    <div class="col"><div class="stat-card stat-unmatched"><div class="value" id="sUnm">–</div><div class="label">Unmatched</div></div></div>
+    <div class="col"><div class="stat-card stat-pending"><div class="value" id="sPen">–</div><div class="label">Pending</div></div></div>
+    <div class="col"><div class="stat-card stat-moved">  <div class="value" id="sMov">–</div><div class="label">Moved</div></div></div>
+    <div class="col"><div class="stat-card stat-errors"> <div class="value" id="sErr">–</div><div class="label">Errors</div></div></div>
+  </div>
+</div>
+
+<!-- ── Filter bar ─────────────────────────────────────────────────────────── -->
+<div class="filter-bar">
+  <div class="input-group" style="max-width:260px">
+    <span class="input-group-text"><i class="bi bi-search"></i></span>
+    <input type="text" id="searchInput" class="form-control" placeholder="Search artist, album, title…" />
+  </div>
+  <select id="statusFilter" class="form-select" style="max-width:140px">
+    <option value="all">All statuses</option>
+    <option value="pending">Pending</option>
+    <option value="moved">Moved</option>
+    <option value="error">Errors</option>
+  </select>
+  <select id="matchFilter" class="form-select" style="max-width:150px">
+    <option value="all">All tracks</option>
+    <option value="matched">Matched only</option>
+    <option value="unmatched">Unmatched only</option>
+  </select>
+  <select id="perPage" class="form-select" style="max-width:110px">
+    <option value="25">25 / page</option>
+    <option value="50" selected>50 / page</option>
+    <option value="100">100 / page</option>
+    <option value="200">200 / page</option>
+  </select>
+  <button class="btn btn-sm btn-outline-secondary ms-auto" onclick="resetFilters()">
+    <i class="bi bi-x-circle me-1"></i>Clear
+  </button>
+</div>
+
+<!-- ── Action bar ─────────────────────────────────────────────────────────── -->
+<div class="action-bar">
+  <input type="checkbox" id="selectAll" class="form-check-input me-1" title="Select all visible" />
+  <button class="btn btn-sm btn-outline-success" onclick="moveSelected()">
+    <i class="bi bi-arrow-right-circle me-1"></i>Move Selected
+  </button>
+  <button class="btn btn-sm" style="background:#7c3aed;color:#fff;border:none" onclick="moveAll()">
+    <i class="bi bi-send-fill me-1"></i>Move All Pending
+  </button>
+  <span class="selected-count" id="selCount"></span>
+</div>
+
+<!-- ── Table ──────────────────────────────────────────────────────────────── -->
+<div class="table-wrap">
+  <table class="tracks-table">
+    <thead>
+      <tr>
+        <th style="width:2rem"></th>
+        <th style="width:2.2rem"></th>
+        <th>Filename</th>
+        <th>Artist</th>
+        <th>Album</th>
+        <th style="width:3.5rem">Track</th>
+        <th>Title</th>
+        <th>Destination</th>
+        <th style="width:4rem"></th>
+      </tr>
+    </thead>
+    <tbody id="tracksTbody">
+      <tr><td colspan="9" id="noResults">Loading…</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<!-- ── Pagination ─────────────────────────────────────────────────────────── -->
+<div class="pagination-bar">
+  <span id="pageInfo">–</span>
+  <div class="d-flex gap-2">
+    <button class="btn btn-sm btn-outline-secondary" id="btnPrev" onclick="changePage(-1)">
+      <i class="bi bi-chevron-left"></i>
+    </button>
+    <button class="btn btn-sm btn-outline-secondary" id="btnNext" onclick="changePage(1)">
+      <i class="bi bi-chevron-right"></i>
+    </button>
+  </div>
+</div>
+
+<!-- ── Move Progress Modal ────────────────────────────────────────────────── -->
+<div class="modal fade" id="moveModal" tabindex="-1" data-bs-backdrop="static">
+  <div class="modal-dialog modal-lg">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title"><i class="bi bi-arrow-left-right me-2 text-success"></i>Moving Files</h5>
+      </div>
+      <div class="modal-body">
+        <!-- Overall progress -->
+        <div class="d-flex justify-content-between mb-1 small">
+          <span id="moveCurrentFile" class="text-muted">Preparing…</span>
+          <span id="moveCounter" class="text-muted">0 / 0</span>
+        </div>
+        <div class="progress mb-3" style="height:8px;background:#1e1e30">
+          <div id="moveProgressBar" class="progress-bar bg-success progress-bar-striped progress-bar-animated"
+               style="width:0%;transition:width .3s ease"></div>
+        </div>
+        <!-- Mini stats -->
+        <div class="d-flex gap-3 mb-3 small">
+          <span><i class="bi bi-check-circle text-success me-1"></i><span id="mvMoved">0</span> moved</span>
+          <span><i class="bi bi-x-circle text-danger me-1"></i><span id="mvFailed">0</span> failed</span>
+        </div>
+        <!-- Log -->
+        <div id="moveLog"></div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary btn-sm" id="btnCloseMove" disabled onclick="closeMove()">
+          Close &amp; Refresh
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+<script>
+// ─── State ────────────────────────────────────────────────────────────────────
+let currentPage   = 1;
+let totalPages    = 1;
+let totalRows     = 0;
+let selectedIds   = new Set();
+let allTracks     = [];
+let searchTimer   = null;
+let moveModal     = null;
+let moveESSource  = null;
+let mvMoved = 0, mvFailed = 0;
+
+// ─── Init ─────────────────────────────────────────────────────────────────────
+document.addEventListener('DOMContentLoaded', () => {
+  moveModal = new bootstrap.Modal(document.getElementById('moveModal'));
+  loadStats();
+  loadTracks();
+
+  document.getElementById('searchInput').addEventListener('input', () => {
+    clearTimeout(searchTimer);
+    searchTimer = setTimeout(() => { currentPage = 1; loadTracks(); }, 350);
+  });
+  ['statusFilter','matchFilter','perPage'].forEach(id => {
+    document.getElementById(id).addEventListener('change', () => { currentPage = 1; loadTracks(); });
+  });
+  document.getElementById('selectAll').addEventListener('change', e => {
+    allTracks.forEach(t => {
+      if (e.target.checked) selectedIds.add(t.id);
+      else                   selectedIds.delete(t.id);
+    });
+    refreshCheckboxes();
+    updateSelCount();
+  });
+});
+
+// ─── Stats ────────────────────────────────────────────────────────────────────
+async function loadStats() {
+  const s = await fetchJson('/api/stats');
+  document.getElementById('sTot').textContent = s.total    ?? '–';
+  document.getElementById('sMat').textContent = s.matched  ?? '–';
+  document.getElementById('sUnm').textContent = s.unmatched?? '–';
+  document.getElementById('sPen').textContent = s.pending  ?? '–';
+  document.getElementById('sMov').textContent = s.moved    ?? '–';
+  document.getElementById('sErr').textContent = s.errors   ?? '–';
+}
+
+// ─── Tracks ───────────────────────────────────────────────────────────────────
+async function loadTracks() {
+  const q      = document.getElementById('searchInput').value.trim();
+  const status = document.getElementById('statusFilter').value;
+  const match  = document.getElementById('matchFilter').value;
+  const per    = parseInt(document.getElementById('perPage').value);
+
+  const params = new URLSearchParams({ page: currentPage, per, status, match });
+  if (q) params.set('q', q);
+
+  const data = await fetchJson('/api/tracks?' + params);
+  allTracks  = data.tracks;
+  totalRows  = data.total;
+  totalPages = Math.max(1, Math.ceil(totalRows / per));
+
+  renderTable(allTracks);
+  renderPagination(per);
+}
+
+function renderTable(tracks) {
+  const tbody = document.getElementById('tracksTbody');
+  if (!tracks.length) {
+    tbody.innerHTML = '<tr><td colspan="9" id="noResults">No tracks found.</td></tr>';
+    return;
+  }
+  tbody.innerHTML = tracks.map(t => rowHtml(t)).join('');
+}
+
+function rowHtml(t) {
+  const checked = selectedIds.has(t.id) ? 'checked' : '';
+  const isSel   = selectedIds.has(t.id) ? 'selected' : '';
+  const statusIcon = {
+    pending: '<i class="bi bi-clock badge-pending" title="Pending"></i>',
+    moved:   '<i class="bi bi-check-circle-fill badge-moved" title="Moved"></i>',
+    error:   '<i class="bi bi-exclamation-circle-fill badge-error" title="Error"></i>',
+    moving:  '<i class="bi bi-arrow-repeat badge-moving" title="Moving…"></i>',
+  }[t.status] || '';
+
+  const dest  = esc(t.destination_path || '');
+  const moved = t.status === 'moved';
+  const disableMove = moved ? 'disabled title="Already moved"' : '';
+
+  return `<tr data-id="${t.id}" class="${isSel}">
+    <td><input type="checkbox" class="form-check-input row-check" data-id="${t.id}" ${checked} onchange="toggleRow(${t.id}, this.checked)" /></td>
+    <td>${statusIcon}</td>
+    <td class="ellipsis" title="${esc(t.original_path)}">${esc(t.filename)}</td>
+    <td class="ellipsis" title="${esc(t.artist||'')}">${esc(t.artist||'')}</td>
+    <td class="ellipsis" title="${esc(t.album||'')}">${esc(t.album||'')}</td>
+    <td style="text-align:center">${esc(t.track_number||'')}</td>
+    <td class="ellipsis">${esc(t.title||'')}</td>
+    <td class="path-col">
+      <div class="dest-cell" id="destCell-${t.id}">
+        <span class="dest-display" title="${dest}" onclick="startEdit(${t.id})">${dest}</span>
+        <input class="dest-input" id="destInput-${t.id}" value="${dest}"
+               onblur="saveEdit(${t.id})" onkeydown="destKey(event,${t.id})" />
+        ${!moved ? `<button class="btn btn-icon btn-outline-secondary" onclick="startEdit(${t.id})" title="Edit path"><i class="bi bi-pencil"></i></button>` : ''}
+      </div>
+    </td>
+    <td>
+      <button class="btn btn-icon btn-outline-success" ${disableMove} onclick="moveSingle(${t.id})" title="Move this file">
+        <i class="bi bi-arrow-right"></i>
+      </button>
+    </td>
+  </tr>`;
+}
+
+function renderPagination(per) {
+  const start = Math.min((currentPage - 1) * per + 1, totalRows);
+  const end   = Math.min(currentPage * per, totalRows);
+  document.getElementById('pageInfo').textContent =
+    totalRows ? `${start}–${end} of ${totalRows}` : 'No results';
+  document.getElementById('btnPrev').disabled = currentPage <= 1;
+  document.getElementById('btnNext').disabled = currentPage >= totalPages;
+}
+
+// ─── Selection ────────────────────────────────────────────────────────────────
+function toggleRow(id, checked) {
+  if (checked) selectedIds.add(id);
+  else         selectedIds.delete(id);
+  const row = document.querySelector(`tr[data-id="${id}"]`);
+  if (row) row.classList.toggle('selected', checked);
+  updateSelCount();
+}
+function refreshCheckboxes() {
+  document.querySelectorAll('.row-check').forEach(cb => {
+    const id = parseInt(cb.dataset.id);
+    cb.checked = selectedIds.has(id);
+    const row  = cb.closest('tr');
+    if (row) row.classList.toggle('selected', selectedIds.has(id));
+  });
+}
+function updateSelCount() {
+  const n = selectedIds.size;
+  document.getElementById('selCount').textContent = n ? `${n} selected` : '';
+}
+
+// ─── Inline editing ───────────────────────────────────────────────────────────
+function startEdit(id) {
+  const input   = document.getElementById(`destInput-${id}`);
+  const display = input.previousElementSibling;
+  display.style.display = 'none';
+  input.style.display   = 'block';
+  input.focus();
+  input.select();
+}
+function destKey(e, id) {
+  if (e.key === 'Enter')  { e.preventDefault(); saveEdit(id); }
+  if (e.key === 'Escape') { cancelEdit(id); }
+}
+async function saveEdit(id) {
+  const input   = document.getElementById(`destInput-${id}`);
+  const display = input.previousElementSibling;
+  const newVal  = input.value.trim();
+
+  if (newVal !== display.title) {
+    await fetchJson(`/api/tracks/${id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ destination_path: newVal }),
+    });
+    display.textContent = newVal;
+    display.title       = newVal;
+  }
+  input.style.display   = 'none';
+  display.style.display = '';
+}
+function cancelEdit(id) {
+  const input   = document.getElementById(`destInput-${id}`);
+  const display = input.previousElementSibling;
+  input.value           = display.title;
+  input.style.display   = 'none';
+  display.style.display = '';
+}
+
+// ─── Move operations ──────────────────────────────────────────────────────────
+async function moveAll() {
+  if (!confirm('Move ALL pending files now?')) return;
+  await triggerMove([]);
+}
+async function moveSelected() {
+  if (!selectedIds.size) { alert('No tracks selected.'); return; }
+  const ids = [...selectedIds];
+  if (!confirm(`Move ${ids.length} selected file(s)?`)) return;
+  await triggerMove(ids);
+}
+async function moveSingle(id) {
+  await triggerMove([id]);
+}
+
+async function triggerMove(ids) {
+  // Reset progress UI
+  mvMoved = mvFailed = 0;
+  document.getElementById('moveProgressBar').style.width = '0%';
+  document.getElementById('moveCounter').textContent     = '0 / 0';
+  document.getElementById('moveCurrentFile').textContent = 'Starting…';
+  document.getElementById('mvMoved').textContent  = '0';
+  document.getElementById('mvFailed').textContent = '0';
+  document.getElementById('moveLog').innerHTML    = '';
+  document.getElementById('btnCloseMove').disabled = true;
+  moveModal.show();
+
+  // Start move on server
+  const res = await fetch('/api/move', {
+    method:  'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body:    JSON.stringify({ track_ids: ids }),
+  });
+  const data = await res.json();
+  logLine(`Starting move of <strong>${data.total}</strong> file(s)…`, 'info');
+
+  // Connect SSE stream
+  if (moveESSource) { moveESSource.close(); }
+  moveESSource = new EventSource('/api/move/stream');
+  moveESSource.onmessage = e => handleMoveEvent(JSON.parse(e.data));
+  moveESSource.onerror   = () => logLine('Stream error — check server.', 'err');
+}
+
+function handleMoveEvent(ev) {
+  if (ev.type === 'heartbeat') return;
+
+  if (ev.type === 'progress') {
+    const pct = ev.total ? Math.round(ev.current / ev.total * 100) : 0;
+    document.getElementById('moveProgressBar').style.width = pct + '%';
+    document.getElementById('moveCounter').textContent     = `${ev.current} / ${ev.total}`;
+    document.getElementById('moveCurrentFile').textContent = ev.filename;
+
+    if (ev.status === 'moved') {
+      mvMoved++;
+      document.getElementById('mvMoved').textContent = mvMoved;
+      logLine(`<i class="bi bi-check2"></i> ${esc(ev.filename)} → ${esc(ev.destination)}`, 'ok');
+      // Reflect in table
+      updateRowStatus(ev.id, 'moved');
+    } else if (ev.status === 'error') {
+      mvFailed++;
+      document.getElementById('mvFailed').textContent = mvFailed;
+      logLine(`<i class="bi bi-x"></i> ${esc(ev.filename)}: ${esc(ev.message)}`, 'err');
+      updateRowStatus(ev.id, 'error');
+    }
+  }
+
+  if (ev.type === 'complete') {
+    moveESSource.close();
+    const bar = document.getElementById('moveProgressBar');
+    bar.style.width = '100%';
+    bar.classList.remove('progress-bar-animated');
+    bar.classList.add(ev.failed > 0 ? 'bg-warning' : 'bg-success');
+    document.getElementById('moveCurrentFile').textContent = 'Done.';
+    document.getElementById('moveCounter').textContent = `${ev.moved} moved · ${ev.failed} failed`;
+    logLine(`<strong>Complete</strong>: ${ev.moved} moved, ${ev.failed} failed.`, 'info');
+    document.getElementById('btnCloseMove').disabled = false;
+  }
+}
+
+function updateRowStatus(id, status) {
+  const row = document.querySelector(`tr[data-id="${id}"]`);
+  if (!row) return;
+  const icons = {
+    moved:  '<i class="bi bi-check-circle-fill badge-moved" title="Moved"></i>',
+    error:  '<i class="bi bi-exclamation-circle-fill badge-error" title="Error"></i>',
+    moving: '<i class="bi bi-arrow-repeat badge-moving" title="Moving…"></i>',
+  };
+  const cells = row.querySelectorAll('td');
+  if (cells[1]) cells[1].innerHTML = icons[status] || '';
+}
+
+function closeMove() {
+  moveModal.hide();
+  loadStats();
+  loadTracks();
+}
+
+// ─── Pagination ───────────────────────────────────────────────────────────────
+function changePage(delta) {
+  const next = currentPage + delta;
+  if (next < 1 || next > totalPages) return;
+  currentPage = next;
+  loadTracks();
+}
+
+// ─── Filters reset ────────────────────────────────────────────────────────────
+function resetFilters() {
+  document.getElementById('searchInput').value   = '';
+  document.getElementById('statusFilter').value  = 'all';
+  document.getElementById('matchFilter').value   = 'all';
+  currentPage = 1;
+  loadTracks();
+}
+
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+function logLine(html, cls = 'dim') {
+  const log  = document.getElementById('moveLog');
+  const line = document.createElement('div');
+  line.className = `log-${cls}`;
+  line.innerHTML = html;
+  log.appendChild(line);
+  log.scrollTop  = log.scrollHeight;
+}
+
+function esc(str) {
+  if (!str) return '';
+  return String(str)
+    .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+    .replace(/"/g,'&quot;');
+}
+
+async function fetchJson(url, opts = {}) {
+  const r = await fetch(url, opts);
+  if (!r.ok) throw new Error(`HTTP ${r.status}`);
+  return r.json();
+}
+</script>
+</body>
+</html>
