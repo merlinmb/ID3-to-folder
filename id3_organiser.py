@@ -10,6 +10,8 @@ Usage:
     python id3_organiser.py /path/to/music --processed /output/processed --unmatched /output/unmatched
 """
 
+import csv
+import io
 import json
 import os
 import queue
@@ -363,6 +365,32 @@ def api_stats():
             FROM tracks
         """).fetchone()
     return jsonify(dict(row))
+
+
+@app.route("/api/export/csv")
+def api_export_csv():
+    with _get_db() as conn:
+        rows = conn.execute(
+            "SELECT filename, artist, album, track_number, title, genre, year, "
+            "duration, original_path, destination_path FROM tracks "
+            "ORDER BY artist NULLS LAST, album NULLS LAST, track_number, title"
+        ).fetchall()
+
+    buf = io.StringIO()
+    writer = csv.writer(buf)
+    writer.writerow([
+        "Filename", "Artist", "Album", "Track Number",
+        "Title", "Genre", "Year", "Duration",
+        "Original Path", "Destination Path",
+    ])
+    for row in rows:
+        writer.writerow([v if v is not None else "" for v in row])
+
+    return app.response_class(
+        buf.getvalue(),
+        mimetype="text/csv",
+        headers={"Content-Disposition": 'attachment; filename="music_library.csv"'},
+    )
 
 
 @app.route("/api/move", methods=["POST"])
