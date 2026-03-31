@@ -818,13 +818,16 @@ async function fetchJson(url, opts = {}) {
 let ecPage = 1;
 
 async function loadEnrichStatus() {
-  const r = await fetch('/api/enrich/status');
-  const d = await r.json();
-  document.getElementById('esRemaining').textContent = d.tracks_remaining ?? '—';
-  document.getElementById('esProcessedToday').textContent = d.tracks_processed_today ?? '—';
-  document.getElementById('esNextRun').textContent = d.next_run ?? '—';
-  const running = document.getElementById('esRunning');
-  running.style.display = d.running ? '' : 'none';
+  try {
+    const d = await fetchJson('/api/enrich/status');
+    document.getElementById('esRemaining').textContent = d.tracks_remaining ?? '—';
+    document.getElementById('esProcessedToday').textContent = d.tracks_processed_today ?? '—';
+    document.getElementById('esNextRun').textContent = d.next_run ?? '—';
+    const running = document.getElementById('esRunning');
+    running.style.display = d.running ? '' : 'none';
+  } catch (e) {
+    console.error('loadEnrichStatus:', e);
+  }
 }
 
 async function loadCandidates(page = 1) {
@@ -832,8 +835,13 @@ async function loadCandidates(page = 1) {
   const source = document.getElementById('ecSourceFilter').value;
   const conf   = document.getElementById('ecConfFilter').value;
   const params = new URLSearchParams({ page, per: 50, source, confidence: conf });
-  const r = await fetch('/api/enrich/candidates?' + params);
-  const d = await r.json();
+  let d;
+  try {
+    d = await fetchJson('/api/enrich/candidates?' + params);
+  } catch (e) {
+    console.error('loadCandidates:', e);
+    return;
+  }
 
   const badge = document.getElementById('enrichBadge');
   if (d.total > 0) { badge.textContent = d.total; badge.style.display = ''; }
@@ -841,15 +849,15 @@ async function loadCandidates(page = 1) {
 
   const tbody = document.getElementById('candidatesTbody');
   tbody.innerHTML = d.candidates.map(c => `
-    <tr data-id="${c.id}" data-track-id="${c.track_id}">
+    <tr data-id="${c.id}">
       <td><input type="checkbox" class="ec-check" value="${c.id}"></td>
-      <td class="ellipsis" title="${c.original_path}">${c.filename}</td>
-      <td><input class="editable-cell" data-field="suggested_artist" value="${c.suggested_artist || ''}"></td>
-      <td><input class="editable-cell" data-field="suggested_album"  value="${c.suggested_album  || ''}"></td>
-      <td><input class="editable-cell" data-field="suggested_title"  value="${c.suggested_title  || ''}"></td>
-      <td><input class="editable-cell" data-field="suggested_year"   value="${c.suggested_year   || ''}" style="width:60px"></td>
-      <td><span class="badge badge-${c.source}">${c.source}</span></td>
-      <td><span class="badge badge-${c.confidence}">${c.confidence}</span></td>
+      <td class="ellipsis" title="${esc(c.original_path)}">${esc(c.filename)}</td>
+      <td><input class="editable-cell" data-field="suggested_artist" value="${esc(c.suggested_artist || '')}"></td>
+      <td><input class="editable-cell" data-field="suggested_album"  value="${esc(c.suggested_album  || '')}"></td>
+      <td><input class="editable-cell" data-field="suggested_title"  value="${esc(c.suggested_title  || '')}"></td>
+      <td><input class="editable-cell" data-field="suggested_year"   value="${esc(c.suggested_year   || '')}" style="width:60px"></td>
+      <td><span class="badge badge-${esc(c.source)}">${esc(c.source)}</span></td>
+      <td><span class="badge badge-${esc(c.confidence)}">${esc(c.confidence)}</span></td>
     </tr>
   `).join('');
 
@@ -889,11 +897,12 @@ async function approveSelected() {
   if (!r.ok) { alert('Error: ' + d.error); return; }
 
   const es = new EventSource('/api/enrich/apply/stream');
+  es.onerror = () => { logContent.innerHTML += '<div class="log-err">Stream error — check server.</div>'; es.close(); };
   es.onmessage = e => {
     const ev = JSON.parse(e.data);
     if (ev.type === 'heartbeat') return;
     const cls = ev.status === 'applied' ? 'log-ok' : ev.status === 'error' ? 'log-err' : 'log-info';
-    logContent.innerHTML += `<div class="${cls}">[${ev.current}/${ev.total}] ${ev.status}: ${ev.filename || ''} ${ev.message || ''}</div>`;
+    logContent.innerHTML += `<div class="${cls}">[${ev.current}/${ev.total}] ${esc(ev.status)}: ${esc(ev.filename || '')} ${esc(ev.message || '')}</div>`;
     logContent.scrollTop = logContent.scrollHeight;
     if (ev.type === 'complete') {
       es.close();
@@ -906,12 +915,14 @@ async function approveSelected() {
 async function rejectSelected() {
   const ids = getSelectedCandidateIds();
   if (!ids.length) return;
-  for (const id of ids) {
-    await fetch(`/api/enrich/candidates/${id}`, {
+  try {
+    await Promise.all(ids.map(id => fetchJson(`/api/enrich/candidates/${id}`, {
       method: 'PATCH',
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({ status: 'rejected' }),
-    });
+    })));
+  } catch (e) {
+    console.error('rejectSelected:', e);
   }
   loadCandidates(ecPage);
 }
