@@ -50,8 +50,7 @@ def test_csv_export_content_type(client):
 
 def test_csv_export_content_disposition(client):
     r = client.get("/api/export/csv")
-    assert "attachment" in r.headers["Content-Disposition"]
-    assert "music_library.csv" in r.headers["Content-Disposition"]
+    assert r.headers["Content-Disposition"] == 'attachment; filename="music_library.csv"'
 
 
 def test_csv_export_has_header_row(client):
@@ -85,6 +84,7 @@ def test_csv_export_row_values(client):
     assert first[4] == "Song One"
     assert first[5] == "Rock"
     assert first[6] == "2020"
+    assert first[7] == "210.5"
     assert first[8] == "/music/track1.mp3"
     assert first[9] == "/processed/Artist A/Album X/01. Song One.mp3"
 
@@ -96,4 +96,9 @@ def test_csv_export_null_fields_become_empty_string(client):
     next(reader)  # skip first row
     second = next(reader)
     assert second[1] == ""   # artist is NULL
+    assert second[2] == ""   # album is NULL
+    assert second[3] == ""   # track_number is NULL
     assert second[4] == ""   # title is NULL
+    assert second[5] == ""   # genre is NULL
+    assert second[6] == ""   # year is NULL
+    assert second[7] == ""   # duration is NULL
