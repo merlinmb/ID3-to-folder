@@ -2,6 +2,9 @@
 
 A Python tool to scan, organize, and manage your music library using ID3 and audio metadata tags. Provides a web UI for reviewing and triggering file moves.
 
+<img width="1911" height="721" alt="image" src="https://github.com/user-attachments/assets/f134c3ec-d2b4-41b3-ac63-f57f4e5c8355" />
+
+
 ## Features
 - Scans directories for supported music files (.mp3, .flac, .aac, .m4a)
 - Extracts metadata and organizes files into artist/album folders
