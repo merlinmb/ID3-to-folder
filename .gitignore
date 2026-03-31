@@ -1,2 +1,5 @@
 # Python virtual environment
 .venv 
+launch.ps1
+*.pyc
+__pycache__/
