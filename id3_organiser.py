@@ -79,7 +79,34 @@ CREATE TABLE IF NOT EXISTS tracks (
     status           TEXT     DEFAULT 'pending',
     error_message    TEXT,
     scanned_at       TEXT,
-    moved_at         TEXT
+    moved_at         TEXT,
+    enrichment_status TEXT    DEFAULT 'none',
+    tags_written_at  TEXT
+);
+
+CREATE TABLE IF NOT EXISTS enrichment_candidates (
+    id                INTEGER  PRIMARY KEY AUTOINCREMENT,
+    track_id          INTEGER  NOT NULL REFERENCES tracks(id),
+    source            TEXT     NOT NULL,
+    suggested_artist  TEXT,
+    suggested_album   TEXT,
+    suggested_title   TEXT,
+    suggested_year    TEXT,
+    suggested_genre   TEXT,
+    confidence        TEXT     NOT NULL,
+    status            TEXT     NOT NULL DEFAULT 'pending_review',
+    raw_response      TEXT,
+    created_at        TEXT     NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS enrichment_runs (
+    id                      INTEGER  PRIMARY KEY AUTOINCREMENT,
+    started_at              TEXT     NOT NULL,
+    last_processed_track_id INTEGER,
+    tracks_processed        INTEGER  DEFAULT 0,
+    tracks_remaining        INTEGER,
+    daily_limit             INTEGER  NOT NULL,
+    status                  TEXT     NOT NULL DEFAULT 'running'
 );
 """
 
@@ -87,12 +114,25 @@ CREATE TABLE IF NOT EXISTS tracks (
 def _get_db() -> sqlite3.Connection:
     conn = sqlite3.connect(_config["db_path"])
     conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA journal_mode=WAL")
     return conn
 
 
 def _init_db() -> None:
     with _get_db() as conn:
         conn.executescript(_SCHEMA)
+
+
+def _migrate_db() -> None:
+    """Idempotently add new columns to existing tracks table."""
+    with _get_db() as conn:
+        existing = {row[1] for row in conn.execute("PRAGMA table_info(tracks)")}
+        if "enrichment_status" not in existing:
+            conn.execute(
+                "ALTER TABLE tracks ADD COLUMN enrichment_status TEXT DEFAULT 'none'"
+            )
+        if "tags_written_at" not in existing:
+            conn.execute("ALTER TABLE tracks ADD COLUMN tags_written_at TEXT")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -568,6 +608,7 @@ def main(source_dir: str, db: str, processed: str, unmatched: str,
 
     # ── Init DB ───────────────────────────────────────────────────────────────
     _init_db()
+    _migrate_db()
 
     # ── Phase 1: collect files ────────────────────────────────────────────────
     files = _phase1_collect_files()
