@@ -365,6 +365,9 @@ def api_tracks():
         sql += " AND matched = 1"
     elif match == "unmatched":
         sql += " AND matched = 0"
+    enrich_filter = request.args.get("enrichment", "all")
+    if enrich_filter != "all":
+        sql += " AND enrichment_status = ?"; params.append(enrich_filter)
     if search:
         like = f"%{search}%"
         sql += " AND (artist LIKE ? OR album LIKE ? OR title LIKE ? OR filename LIKE ?)"
@@ -546,6 +549,191 @@ def api_move_stream():
         while True:
             try:
                 event = _move_event_queue.get(timeout=60)
+                yield f"data: {json.dumps(event)}\n\n"
+                if event.get("type") == "complete":
+                    break
+            except queue.Empty:
+                yield 'data: {"type":"heartbeat"}\n\n'
+
+    return Response(
+        stream_with_context(_generate()),
+        mimetype="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Enrichment API
+# ─────────────────────────────────────────────────────────────────────────────
+
+@app.route("/api/enrich/candidates")
+def api_enrich_candidates():
+    status     = request.args.get("status", "pending_review")
+    source     = request.args.get("source", "all")
+    confidence = request.args.get("confidence", "all")
+    page       = max(1, int(request.args.get("page", 1)))
+    per        = min(200, max(10, int(request.args.get("per", 50))))
+
+    sql    = """
+        SELECT ec.*, t.original_path, t.filename
+        FROM enrichment_candidates ec
+        JOIN tracks t ON t.id = ec.track_id
+        WHERE 1=1
+    """
+    params: list = []
+
+    if status != "all":
+        sql += " AND ec.status = ?";     params.append(status)
+    if source != "all":
+        sql += " AND ec.source = ?";     params.append(source)
+    if confidence != "all":
+        sql += " AND ec.confidence = ?"; params.append(confidence)
+
+    sql += " ORDER BY ec.confidence DESC, ec.created_at DESC"
+
+    with _get_db() as conn:
+        total = conn.execute(f"SELECT COUNT(*) FROM ({sql})", params).fetchone()[0]
+        rows  = conn.execute(
+            sql + f" LIMIT {per} OFFSET {(page - 1) * per}", params
+        ).fetchall()
+
+    return jsonify({"total": total, "page": page, "per": per,
+                    "candidates": [dict(r) for r in rows]})
+
+
+@app.route("/api/enrich/candidates/<int:candidate_id>", methods=["PATCH"])
+def api_enrich_candidate_update(candidate_id: int):
+    data    = request.json or {}
+    allowed = {"status", "suggested_artist", "suggested_album",
+               "suggested_title", "suggested_year"}
+    updates = {k: v for k, v in data.items() if k in allowed}
+    if not updates:
+        return jsonify({"error": "nothing to update"}), 400
+    set_sql = ", ".join(f"{k} = ?" for k in updates)
+    values  = list(updates.values()) + [candidate_id]
+    with _get_db() as conn:
+        conn.execute(
+            f"UPDATE enrichment_candidates SET {set_sql} WHERE id = ?", values
+        )
+    return jsonify({"ok": True})
+
+
+@app.route("/api/enrich/status")
+def api_enrich_status():
+    if _enrichment_scheduler is not None:
+        return jsonify(_enrichment_scheduler.get_status())
+
+    with _get_db() as conn:
+        remaining = conn.execute(
+            "SELECT COUNT(*) FROM tracks WHERE matched=0 "
+            "AND enrichment_status NOT IN ('enriched')"
+        ).fetchone()[0]
+    return jsonify({
+        "running": False,
+        "tracks_processed_today": 0,
+        "tracks_remaining": remaining,
+        "next_run": "not started",
+        "last_run": None,
+    })
+
+
+@app.route("/api/enrich/run-now", methods=["POST"])
+def api_enrich_run_now():
+    if _enrichment_scheduler is not None:
+        _enrichment_scheduler.run_now()
+        return jsonify({"ok": True, "message": "batch triggered"})
+    return jsonify({"ok": False, "message": "enrichment scheduler not running"}), 400
+
+
+_apply_event_queue: queue.Queue = queue.Queue()
+
+
+@app.route("/api/enrich/apply", methods=["POST"])
+def api_enrich_apply():
+    global _apply_event_queue
+    _apply_event_queue = queue.Queue()
+
+    from enrichment.tag_writer import write_tags, TagWriteError
+
+    data          = request.json or {}
+    candidate_ids = data.get("candidate_ids", [])
+    if not candidate_ids:
+        return jsonify({"error": "no candidate_ids provided"}), 400
+
+    with _get_db() as conn:
+        ph   = ",".join("?" * len(candidate_ids))
+        rows = conn.execute(
+            f"SELECT ec.*, t.original_path, t.filename FROM enrichment_candidates ec "
+            f"JOIN tracks t ON t.id = ec.track_id "
+            f"WHERE ec.id IN ({ph}) AND ec.status = 'pending_review'",
+            candidate_ids,
+        ).fetchall()
+    candidates = [dict(r) for r in rows]
+
+    def _do_apply():
+        applied = failed = 0
+        for i, cand in enumerate(candidates, 1):
+            tags = {
+                "artist":       cand["suggested_artist"],
+                "album":        cand["suggested_album"],
+                "title":        cand["suggested_title"],
+                "year":         cand["suggested_year"],
+                "genre":        cand.get("suggested_genre"),
+            }
+            tid  = cand["track_id"]
+            cid  = cand["id"]
+            src  = cand["original_path"]
+
+            _apply_event_queue.put({
+                "type": "progress", "id": cid, "current": i,
+                "total": len(candidates), "filename": cand.get("filename", ""),
+                "status": "applying",
+            })
+
+            try:
+                write_tags(src, tags)
+                meta = {**tags, "track_number": None}
+                dest, is_matched = _calculate_destination(meta, src)
+                now = datetime.now().isoformat()
+                with _get_db() as conn:
+                    conn.execute(
+                        "UPDATE tracks SET artist=?, album=?, title=?, year=?, "
+                        "destination_path=?, matched=?, enrichment_status='enriched', "
+                        "tags_written_at=? WHERE id=?",
+                        (tags["artist"], tags["album"], tags["title"], tags.get("year"),
+                         dest, 1 if is_matched else 0, now, tid)
+                    )
+                    conn.execute(
+                        "UPDATE enrichment_candidates SET status='applied' WHERE id=?", (cid,)
+                    )
+                applied += 1
+                _apply_event_queue.put({
+                    "type": "progress", "id": cid, "current": i,
+                    "total": len(candidates), "status": "applied",
+                })
+            except Exception as exc:
+                failed += 1
+                with _get_db() as conn:
+                    conn.execute(
+                        "UPDATE tracks SET error_message=? WHERE id=?", (str(exc), tid)
+                    )
+                _apply_event_queue.put({
+                    "type": "progress", "id": cid, "current": i,
+                    "total": len(candidates), "status": "error", "message": str(exc),
+                })
+
+        _apply_event_queue.put({"type": "complete", "applied": applied, "failed": failed})
+
+    threading.Thread(target=_do_apply, daemon=True).start()
+    return jsonify({"status": "started", "total": len(candidates)})
+
+
+@app.route("/api/enrich/apply/stream")
+def api_enrich_apply_stream():
+    def _generate():
+        while True:
+            try:
+                event = _apply_event_queue.get(timeout=60)
                 yield f"data: {json.dumps(event)}\n\n"
                 if event.get("type") == "complete":
                     break
