@@ -54,10 +54,12 @@ def test_folder_grouping_propagates_artist():
         {"id": 1, "original_path": "/music/Beatles/t1.mp3", "artist": "The Beatles", "album": None},
         {"id": 2, "original_path": "/music/Beatles/t2.mp3", "artist": "The Beatles", "album": None},
         {"id": 3, "original_path": "/music/Beatles/t3.mp3", "artist": None, "album": None},
+        {"id": 4, "original_path": "/music/Beatles/t4.mp3", "artist": None, "album": None},
     ]
     result = apply_folder_grouping(tracks)
-    # 2 out of 3 is majority (>= 50%), so should propagate
-    assert result[2]["artist"] == "The Beatles"
+    # 2 of 4 = 50%, passes threshold; both null siblings should fill
+    null_tracks = [t for t in result if t["id"] in (3, 4)]
+    assert all(t["artist"] == "The Beatles" for t in null_tracks)
 
 
 def test_folder_grouping_does_not_overwrite_existing():
