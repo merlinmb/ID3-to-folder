@@ -178,6 +178,45 @@
       color: #64748b;
     }
 
+    /* ── Enrich badges ──────────────────────────────────────────── */
+    .badge-heuristic { background: #1e3a5f; color: #93c5fd; }
+    .badge-musicbrainz { background: #1a3a2a; color: #86efac; }
+    .badge-claude { background: #3a1a5f; color: #c4b5fd; }
+    .badge-high { background: #14532d; color: #4ade80; }
+    .badge-low  { background: #713f12; color: #fde68a; }
+
+    /* ── Enrich status bar ───────────────────────────────────────── */
+    .enrich-status-bar {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: .5rem;
+      padding: .7rem 1.2rem;
+      display: flex;
+      gap: 1.5rem;
+      align-items: center;
+      flex-wrap: wrap;
+      margin-bottom: 1rem;
+    }
+    .enrich-stat { text-align: center; }
+    .enrich-stat .val { font-size: 1.3rem; font-weight: 700; color: var(--accent-light); }
+    .enrich-stat .lbl { font-size: .68rem; color: #64748b; text-transform: uppercase; }
+
+    /* ── Inline editable cells ───────────────────────────────────── */
+    .editable-cell {
+      background: transparent;
+      border: 1px solid transparent;
+      border-radius: .25rem;
+      color: #cbd5e1;
+      font-size: .8rem;
+      padding: .15rem .3rem;
+      width: 100%;
+    }
+    .editable-cell:focus {
+      outline: none;
+      border-color: var(--accent);
+      background: #1a1040;
+    }
+
     /* ── Progress modal ──────────────────────────────────────────── */
     .modal-content {
       background: #13131c;
@@ -237,6 +276,23 @@
   </div>
 </div>
 
+<!-- ── Nav tabs ────────────────────────────────────────────────────────────── -->
+<ul class="nav nav-tabs px-3 pt-2" style="background:var(--bg-card);border-bottom:1px solid var(--border)" id="mainTabs">
+  <li class="nav-item">
+    <a class="nav-link active" id="tracks-tab" data-bs-toggle="tab" href="#tracksPane" role="tab">
+      <i class="bi bi-music-note-list"></i> Tracks
+    </a>
+  </li>
+  <li class="nav-item">
+    <a class="nav-link" id="enrich-tab" data-bs-toggle="tab" href="#enrichPane" role="tab">
+      <i class="bi bi-stars"></i> Enrich
+      <span class="badge bg-warning text-dark ms-1" id="enrichBadge" style="display:none"></span>
+    </a>
+  </li>
+</ul>
+<div class="tab-content">
+<div class="tab-pane fade show active" id="tracksPane" role="tabpanel">
+
 <!-- ── Filter bar ─────────────────────────────────────────────────────────── -->
 <div class="filter-bar">
   <div class="input-group" style="max-width:260px">
@@ -259,6 +315,12 @@
     <option value="50" selected>50 / page</option>
     <option value="100">100 / page</option>
     <option value="200">200 / page</option>
+  </select>
+  <select class="form-select form-select-sm" style="width:auto" id="enrichFilter" onchange="loadTracks()">
+    <option value="all">All enrichment</option>
+    <option value="none">Not enriched</option>
+    <option value="review_needed">Review needed</option>
+    <option value="enriched">Enriched</option>
   </select>
   <button class="btn btn-sm btn-outline-secondary ms-auto" onclick="resetFilters()">
     <i class="bi bi-x-circle me-1"></i>Clear
@@ -314,6 +376,87 @@
     </button>
   </div>
 </div>
+
+</div>
+<!-- end #tracksPane -->
+
+<div class="tab-pane fade" id="enrichPane" role="tabpanel">
+  <!-- Status Bar -->
+  <div class="p-3">
+    <div class="enrich-status-bar" id="enrichStatusBar">
+      <div class="enrich-stat">
+        <div class="val" id="esRemaining">—</div>
+        <div class="lbl">Remaining</div>
+      </div>
+      <div class="enrich-stat">
+        <div class="val" id="esProcessedToday">—</div>
+        <div class="lbl">Today</div>
+      </div>
+      <div class="enrich-stat">
+        <div class="val" id="esNextRun">—</div>
+        <div class="lbl">Next Run</div>
+      </div>
+      <div class="ms-auto d-flex gap-2 align-items-center">
+        <span id="esRunning" class="badge bg-success" style="display:none">Running</span>
+        <button class="btn btn-sm btn-outline-primary" onclick="triggerRunNow()">
+          <i class="bi bi-play-fill"></i> Run Now
+        </button>
+      </div>
+    </div>
+
+    <!-- Filters -->
+    <div class="filter-bar mb-2">
+      <select class="form-select form-select-sm" style="width:auto" id="ecSourceFilter" onchange="loadCandidates()">
+        <option value="all">All sources</option>
+        <option value="heuristic">Heuristic</option>
+        <option value="musicbrainz">MusicBrainz</option>
+        <option value="claude">Claude</option>
+      </select>
+      <select class="form-select form-select-sm" style="width:auto" id="ecConfFilter" onchange="loadCandidates()">
+        <option value="all">All confidence</option>
+        <option value="high">High</option>
+        <option value="low">Low</option>
+      </select>
+      <button class="btn btn-sm btn-success ms-auto" onclick="approveSelected()">
+        <i class="bi bi-check2-all"></i> Write Tags
+      </button>
+      <button class="btn btn-sm btn-outline-danger" onclick="rejectSelected()">
+        <i class="bi bi-x-lg"></i> Reject
+      </button>
+    </div>
+
+    <!-- Review Queue Table -->
+    <div class="table-wrap">
+      <table class="tracks-table" id="candidatesTable">
+        <thead>
+          <tr>
+            <th><input type="checkbox" id="ecSelectAll" onchange="toggleAllCandidates(this)"></th>
+            <th>File</th>
+            <th>Artist</th>
+            <th>Album</th>
+            <th>Title</th>
+            <th>Year</th>
+            <th>Source</th>
+            <th>Confidence</th>
+          </tr>
+        </thead>
+        <tbody id="candidatesTbody"></tbody>
+      </table>
+    </div>
+
+    <!-- Pagination -->
+    <div class="pagination-bar" id="ecPagination"></div>
+
+    <!-- Apply progress log -->
+    <div id="applyLog" style="display:none" class="mt-3">
+      <div id="applyLogContent" style="max-height:200px;overflow-y:auto;font-family:monospace;font-size:.78rem;background:#0d0d12;border:1px solid var(--border);border-radius:.35rem;padding:.6rem .8rem;"></div>
+    </div>
+  </div>
+</div>
+<!-- end #enrichPane -->
+
+</div>
+<!-- end .tab-content -->
 
 <!-- ── Move Progress Modal ────────────────────────────────────────────────── -->
 <div class="modal fade" id="moveModal" tabindex="-1" data-bs-backdrop="static">
@@ -372,7 +515,7 @@ document.addEventListener('DOMContentLoaded', () => {
     clearTimeout(searchTimer);
     searchTimer = setTimeout(() => { currentPage = 1; loadTracks(); }, 350);
   });
-  ['statusFilter','matchFilter','perPage'].forEach(id => {
+  ['statusFilter','matchFilter','perPage','enrichFilter'].forEach(id => {
     document.getElementById(id).addEventListener('change', () => { currentPage = 1; loadTracks(); });
   });
   document.getElementById('selectAll').addEventListener('change', e => {
@@ -405,6 +548,8 @@ async function loadTracks() {
 
   const params = new URLSearchParams({ page: currentPage, per, status, match });
   if (q) params.set('q', q);
+  const enrichFilter = document.getElementById('enrichFilter')?.value || 'all';
+  if (enrichFilter !== 'all') params.set('enrichment', enrichFilter);
 
   const data = await fetchJson('/api/tracks?' + params);
   allTracks  = data.tracks;
@@ -640,6 +785,7 @@ function resetFilters() {
   document.getElementById('searchInput').value   = '';
   document.getElementById('statusFilter').value  = 'all';
   document.getElementById('matchFilter').value   = 'all';
+  document.getElementById('enrichFilter').value  = 'all';
   currentPage = 1;
   loadTracks();
 }
@@ -666,6 +812,118 @@ async function fetchJson(url, opts = {}) {
   if (!r.ok) throw new Error(`HTTP ${r.status}`);
   return r.json();
 }
+
+// ── Enrich tab ────────────────────────────────────────────────────────────
+let ecPage = 1;
+
+async function loadEnrichStatus() {
+  const r = await fetch('/api/enrich/status');
+  const d = await r.json();
+  document.getElementById('esRemaining').textContent = d.tracks_remaining ?? '—';
+  document.getElementById('esProcessedToday').textContent = d.tracks_processed_today ?? '—';
+  document.getElementById('esNextRun').textContent = d.next_run ?? '—';
+  const running = document.getElementById('esRunning');
+  running.style.display = d.running ? '' : 'none';
+}
+
+async function loadCandidates(page = 1) {
+  ecPage = page;
+  const source = document.getElementById('ecSourceFilter').value;
+  const conf   = document.getElementById('ecConfFilter').value;
+  const params = new URLSearchParams({ page, per: 50, source, confidence: conf });
+  const r = await fetch('/api/enrich/candidates?' + params);
+  const d = await r.json();
+
+  const badge = document.getElementById('enrichBadge');
+  if (d.total > 0) { badge.textContent = d.total; badge.style.display = ''; }
+  else badge.style.display = 'none';
+
+  const tbody = document.getElementById('candidatesTbody');
+  tbody.innerHTML = d.candidates.map(c => `
+    <tr data-id="${c.id}" data-track-id="${c.track_id}">
+      <td><input type="checkbox" class="ec-check" value="${c.id}"></td>
+      <td class="ellipsis" title="${c.original_path}">${c.filename}</td>
+      <td><input class="editable-cell" data-field="suggested_artist" value="${c.suggested_artist || ''}"></td>
+      <td><input class="editable-cell" data-field="suggested_album"  value="${c.suggested_album  || ''}"></td>
+      <td><input class="editable-cell" data-field="suggested_title"  value="${c.suggested_title  || ''}"></td>
+      <td><input class="editable-cell" data-field="suggested_year"   value="${c.suggested_year   || ''}" style="width:60px"></td>
+      <td><span class="badge badge-${c.source}">${c.source}</span></td>
+      <td><span class="badge badge-${c.confidence}">${c.confidence}</span></td>
+    </tr>
+  `).join('');
+
+  const total_pages = Math.ceil(d.total / 50);
+  document.getElementById('ecPagination').innerHTML =
+    `<span>${d.total} candidates</span>` +
+    (total_pages > 1 ? `<div class="d-flex gap-1">
+      ${ecPage > 1 ? `<button class="btn btn-sm btn-outline-secondary" onclick="loadCandidates(${ecPage-1})">Prev</button>` : ''}
+      <span class="px-2 py-1">Page ${ecPage}/${total_pages}</span>
+      ${ecPage < total_pages ? `<button class="btn btn-sm btn-outline-secondary" onclick="loadCandidates(${ecPage+1})">Next</button>` : ''}
+    </div>` : '');
+}
+
+function toggleAllCandidates(cb) {
+  document.querySelectorAll('.ec-check').forEach(c => c.checked = cb.checked);
+}
+
+function getSelectedCandidateIds() {
+  return [...document.querySelectorAll('.ec-check:checked')].map(c => parseInt(c.value));
+}
+
+async function approveSelected() {
+  const ids = getSelectedCandidateIds();
+  if (!ids.length) { alert('Select at least one candidate.'); return; }
+
+  const log = document.getElementById('applyLog');
+  const logContent = document.getElementById('applyLogContent');
+  log.style.display = '';
+  logContent.innerHTML = '';
+
+  const r = await fetch('/api/enrich/apply', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({ candidate_ids: ids }),
+  });
+  const d = await r.json();
+  if (!r.ok) { alert('Error: ' + d.error); return; }
+
+  const es = new EventSource('/api/enrich/apply/stream');
+  es.onmessage = e => {
+    const ev = JSON.parse(e.data);
+    if (ev.type === 'heartbeat') return;
+    const cls = ev.status === 'applied' ? 'log-ok' : ev.status === 'error' ? 'log-err' : 'log-info';
+    logContent.innerHTML += `<div class="${cls}">[${ev.current}/${ev.total}] ${ev.status}: ${ev.filename || ''} ${ev.message || ''}</div>`;
+    logContent.scrollTop = logContent.scrollHeight;
+    if (ev.type === 'complete') {
+      es.close();
+      loadCandidates(ecPage);
+      loadEnrichStatus();
+    }
+  };
+}
+
+async function rejectSelected() {
+  const ids = getSelectedCandidateIds();
+  if (!ids.length) return;
+  for (const id of ids) {
+    await fetch(`/api/enrich/candidates/${id}`, {
+      method: 'PATCH',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ status: 'rejected' }),
+    });
+  }
+  loadCandidates(ecPage);
+}
+
+async function triggerRunNow() {
+  await fetch('/api/enrich/run-now', { method: 'POST' });
+  loadEnrichStatus();
+}
+
+document.getElementById('enrich-tab').addEventListener('shown.bs.tab', () => {
+  loadCandidates();
+  loadEnrichStatus();
+});
 </script>
 </body>
 </html>
