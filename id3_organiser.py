@@ -106,7 +106,8 @@ CREATE TABLE IF NOT EXISTS enrichment_runs (
     tracks_processed        INTEGER  DEFAULT 0,
     tracks_remaining        INTEGER,
     daily_limit             INTEGER  NOT NULL,
-    status                  TEXT     NOT NULL DEFAULT 'running'
+    status                  TEXT     NOT NULL DEFAULT 'running',
+    claude_batch_id         TEXT
 );
 """
 
@@ -124,15 +125,19 @@ def _init_db() -> None:
 
 
 def _migrate_db() -> None:
-    """Idempotently add new columns to existing tracks table."""
+    """Idempotently add new columns to existing tables."""
     with _get_db() as conn:
-        existing = {row[1] for row in conn.execute("PRAGMA table_info(tracks)")}
-        if "enrichment_status" not in existing:
+        existing_tracks = {row[1] for row in conn.execute("PRAGMA table_info(tracks)")}
+        if "enrichment_status" not in existing_tracks:
             conn.execute(
                 "ALTER TABLE tracks ADD COLUMN enrichment_status TEXT DEFAULT 'none'"
             )
-        if "tags_written_at" not in existing:
+        if "tags_written_at" not in existing_tracks:
             conn.execute("ALTER TABLE tracks ADD COLUMN tags_written_at TEXT")
+
+        existing_runs = {row[1] for row in conn.execute("PRAGMA table_info(enrichment_runs)")}
+        if "claude_batch_id" not in existing_runs:
+            conn.execute("ALTER TABLE enrichment_runs ADD COLUMN claude_batch_id TEXT")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
