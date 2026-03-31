@@ -24,6 +24,7 @@ from datetime import datetime
 from pathlib import Path
 
 import click
+from enrichment.pipeline import EnrichmentScheduler
 from flask import Flask, Response, jsonify, render_template, request, stream_with_context
 from mutagen import File as MutagenFile
 from rich import box
@@ -57,6 +58,8 @@ app = Flask(__name__)
 _config: dict = {}
 # Per-move SSE event queue (reset each time a move is triggered)
 _move_event_queue: queue.Queue = queue.Queue()
+# Enrichment scheduler (set when enrich command runs)
+_enrichment_scheduler: "EnrichmentScheduler | None" = None
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Database
@@ -656,5 +659,82 @@ def main(source_dir: str, db: str, processed: str, unmatched: str,
     app.run(host="0.0.0.0", port=port, debug=False, use_reloader=False)
 
 
+@click.command(context_settings={"help_option_names": ["-h", "--help"]})
+@click.argument("source_dir", type=click.Path(exists=True, file_okay=False))
+@click.option("--db",           default="music_organiser.db", show_default=True,
+              help="SQLite database path.")
+@click.option("--processed",    default="./processed",         show_default=True,
+              help="Base directory for organised files.")
+@click.option("--unmatched",    default="./unmatched",         show_default=True,
+              help="Base directory for unmatched files.")
+@click.option("--daily-limit",  default=500,                   show_default=True,
+              help="Max MusicBrainz lookups per day.")
+@click.option("--claude-limit", default=100,                   show_default=True,
+              help="Max Claude AI lookups per day.")
+@click.option("--run-now",      is_flag=True,
+              help="Run a batch immediately without waiting for daily schedule.")
+def enrich(source_dir: str, db: str, processed: str, unmatched: str,
+           daily_limit: int, claude_limit: int, run_now: bool) -> None:
+    """Run the tag enrichment pipeline for unmatched tracks.
+
+    SOURCE_DIR  Root directory (same as used with the organise command).
+    """
+    global _enrichment_scheduler
+    _config["db_path"]        = db
+    _config["source_dir"]     = os.path.abspath(source_dir)
+    _config["processed_base"] = os.path.abspath(processed)
+    _config["unmatched_base"] = os.path.abspath(unmatched)
+
+    _init_db()
+    _migrate_db()
+
+    cfg = {
+        "source_dir":     _config["source_dir"],
+        "processed_base": _config["processed_base"],
+        "unmatched_base": _config["unmatched_base"],
+    }
+
+    console.print()
+    console.print(
+        Panel.fit(
+            Text.assemble(
+                ("  ID3 Enrichment  ", "bold white on #4c1d95"),
+                (f"  daily limit: {daily_limit}  ", "bold #a78bfa on #4c1d95"),
+            ),
+            border_style="#7c3aed",
+            padding=(0, 2),
+        )
+    )
+    console.print()
+
+    _enrichment_scheduler = EnrichmentScheduler(db, cfg, daily_limit, claude_limit)
+    _enrichment_scheduler.start()
+
+    if run_now:
+        console.print("[bold cyan]Triggering immediate batch…[/bold cyan]")
+        _enrichment_scheduler.run_now()
+
+    console.print(
+        "[dim]Stage 1 (heuristics) running now. "
+        "Stage 2/3 scheduled daily at 02:00. Press Ctrl+C to stop.[/dim]"
+    )
+
+    try:
+        import time as _time
+        while True:
+            _time.sleep(60)
+    except KeyboardInterrupt:
+        console.print("\n[yellow]Enrichment stopped.[/yellow]")
+
+
+@click.group()
+def cli():
+    pass
+
+
+cli.add_command(main, name="organise")
+cli.add_command(enrich, name="enrich")
+
+
 if __name__ == "__main__":
-    main()
+    cli()

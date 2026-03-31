@@ -3,6 +3,8 @@ import sqlite3
 import pytest
 import id3_organiser as app_module
 from id3_organiser import app
+from click.testing import CliRunner
+import unittest.mock
 
 
 @pytest.fixture
@@ -40,3 +42,12 @@ def test_wal_mode_enabled(client):
     mode = conn.execute("PRAGMA journal_mode").fetchone()[0]
     conn.close()
     assert mode == "wal"
+
+
+def test_enrich_command_exists():
+    from id3_organiser import enrich
+    runner = CliRunner()
+    result = runner.invoke(enrich, ["--help"])
+    assert result.exit_code == 0
+    assert "--daily-limit" in result.output
+    assert "--run-now" in result.output
