@@ -260,6 +260,7 @@ class EnrichmentScheduler:
         self.daily_limit = daily_limit
         self.claude_limit = claude_limit
         self._run_now_event = threading.Event()
+        self._lock = threading.Lock()
         self._thread: threading.Thread | None = None
         self._status: dict = {
             "running": False,
@@ -271,7 +272,8 @@ class EnrichmentScheduler:
 
     def get_status(self) -> dict:
         self._refresh_remaining()
-        return dict(self._status)
+        with self._lock:
+            return dict(self._status)
 
     def run_now(self) -> None:
         self._run_now_event.set()
@@ -288,18 +290,22 @@ class EnrichmentScheduler:
                 "AND enrichment_status NOT IN ('enriched')"
             ).fetchone()
             conn.close()
-            self._status["tracks_remaining"] = row[0] if row else 0
+            with self._lock:
+                self._status["tracks_remaining"] = row[0] if row else 0
         except Exception:
             pass
 
     def _run_batch(self) -> None:
-        self._status["running"] = True
-        self._status["last_run"] = datetime.now().isoformat()
+        with self._lock:
+            self._status["running"] = True
+            self._status["last_run"] = datetime.now().isoformat()
         try:
             run_stage2_batch(self.db_path, self.cfg, self.daily_limit, self.claude_limit)
-            self._status["tracks_processed_today"] = self.daily_limit
+            with self._lock:
+                self._status["tracks_processed_today"] = self.daily_limit
         finally:
-            self._status["running"] = False
+            with self._lock:
+                self._status["running"] = False
             self._refresh_remaining()
 
     def _loop(self) -> None:

@@ -103,7 +103,8 @@ def test_stage2_batch_inserts_candidate(db, tmp_path):
                  "title": "In The Flesh", "year": "1979", "confidence": "high"}
     with patch("enrichment.musicbrainz.query_musicbrainz", return_value=mb_result), \
          patch("enrichment.claude_fallback.submit_claude_batch", return_value="batch_xyz"), \
-         patch("enrichment.claude_fallback.collect_claude_batch", return_value=None):
+         patch("enrichment.claude_fallback.collect_claude_batch", return_value=None), \
+         patch("time.sleep"):
         run_stage2_batch(db, cfg, daily_limit=10, claude_limit=5)
 
     conn = sqlite3.connect(db)
@@ -120,7 +121,8 @@ def test_stage2_records_enrichment_run(db, tmp_path):
     }
     with patch("enrichment.musicbrainz.query_musicbrainz", return_value=None), \
          patch("enrichment.claude_fallback.submit_claude_batch", return_value="batch_xyz"), \
-         patch("enrichment.claude_fallback.collect_claude_batch", return_value=None):
+         patch("enrichment.claude_fallback.collect_claude_batch", return_value=None), \
+         patch("time.sleep"):
         run_stage2_batch(db, cfg, daily_limit=10, claude_limit=5)
 
     conn = sqlite3.connect(db)
