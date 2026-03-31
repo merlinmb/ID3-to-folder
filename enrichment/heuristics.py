@@ -63,10 +63,11 @@ def apply_folder_grouping(tracks: list[dict]) -> list[dict]:
             values = [t[field] for t in folder_tracks if t.get(field)]
             if not values:
                 continue
-            most_common = Counter(values).most_common(1)[0][0]
-            # Propagate most common value to tracks with null field
-            for t in folder_tracks:
-                if not t.get(field):
-                    t[field] = most_common
+            most_common, count = Counter(values).most_common(1)[0]
+            # Only propagate if present in majority of tracks
+            if count >= len(folder_tracks) * 0.5:
+                for t in folder_tracks:
+                    if not t.get(field):
+                        t[field] = most_common
 
     return tracks

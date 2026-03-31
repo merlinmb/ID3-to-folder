@@ -52,12 +52,12 @@ def test_flat_file_returns_low_confidence():
 def test_folder_grouping_propagates_artist():
     tracks = [
         {"id": 1, "original_path": "/music/Beatles/t1.mp3", "artist": "The Beatles", "album": None},
-        {"id": 2, "original_path": "/music/Beatles/t2.mp3", "artist": None, "album": None},
+        {"id": 2, "original_path": "/music/Beatles/t2.mp3", "artist": "The Beatles", "album": None},
         {"id": 3, "original_path": "/music/Beatles/t3.mp3", "artist": None, "album": None},
     ]
     result = apply_folder_grouping(tracks)
-    null_artist = [t for t in result if t["id"] in (2, 3)]
-    assert all(t["artist"] == "The Beatles" for t in null_artist)
+    # 2 out of 3 is majority (>= 50%), so should propagate
+    assert result[2]["artist"] == "The Beatles"
 
 
 def test_folder_grouping_does_not_overwrite_existing():
@@ -77,3 +77,18 @@ def test_folder_grouping_skips_small_folders():
     ]
     result = apply_folder_grouping(tracks)
     assert result[1]["artist"] is None  # < 3 files, no propagation
+
+
+def test_folder_grouping_suppresses_minority_artist():
+    """Artist present in only 2 of 5 tracks should not propagate."""
+    tracks = [
+        {"id": 1, "original_path": "/music/Comp/t1.mp3", "artist": "Artist A", "album": None},
+        {"id": 2, "original_path": "/music/Comp/t2.mp3", "artist": "Artist A", "album": None},
+        {"id": 3, "original_path": "/music/Comp/t3.mp3", "artist": "Artist B", "album": None},
+        {"id": 4, "original_path": "/music/Comp/t4.mp3", "artist": None, "album": None},
+        {"id": 5, "original_path": "/music/Comp/t5.mp3", "artist": None, "album": None},
+    ]
+    result = apply_folder_grouping(tracks)
+    # "Artist A" has count=2, len=5, threshold=2.5 — should NOT propagate
+    assert result[3]["artist"] is None
+    assert result[4]["artist"] is None
