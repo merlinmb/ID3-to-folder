@@ -142,6 +142,28 @@ def _migrate_db() -> None:
         if "claude_batch_id" not in existing_runs:
             conn.execute("ALTER TABLE enrichment_runs ADD COLUMN claude_batch_id TEXT")
 
+        # Clear placeholder "Unknown Artist" / "Unknown Album" values that ripping
+        # software writes into tags, and mark affected tracks for enrichment.
+        # TRIM() in SQLite only strips spaces; REPLACE handles tabs/other whitespace.
+        conn.execute("""
+            UPDATE tracks
+            SET artist            = NULL,
+                matched           = 0,
+                enrichment_status = CASE WHEN enrichment_status != 'in_progress'
+                                         THEN 'none' ELSE enrichment_status END
+            WHERE TRIM(REPLACE(REPLACE(LOWER(artist), CHAR(9), ' '), CHAR(10), ' '))
+                  = 'unknown artist'
+        """)
+        conn.execute("""
+            UPDATE tracks
+            SET album             = NULL,
+                matched           = 0,
+                enrichment_status = CASE WHEN enrichment_status != 'in_progress'
+                                         THEN 'none' ELSE enrichment_status END
+            WHERE TRIM(REPLACE(REPLACE(LOWER(album), CHAR(9), ' '), CHAR(10), ' '))
+                  = 'unknown album'
+        """)
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Metadata helpers
@@ -165,6 +187,9 @@ def _parse_track_number(raw: str | None) -> str | None:
     return f"{int(m.group(1)):02d}" if m else None
 
 
+_UNKNOWN_PLACEHOLDERS = {"unknown artist", "unknown album"}
+
+
 def _extract_metadata(file_path: str) -> dict:
     """Return a normalised tag dict for a music file (easy=True flattens formats)."""
     try:
@@ -178,10 +203,16 @@ def _extract_metadata(file_path: str) -> dict:
         val = audio.get(key)
         return str(val[0]).strip() if val else None
 
+    def clean(value: str | None) -> str | None:
+        """Return None for known ripping-software placeholder strings."""
+        if value and value.strip().lower() in _UNKNOWN_PLACEHOLDERS:
+            return None
+        return value
+
     meta = {
         "title":        tag("title"),
-        "artist":       tag("artist") or tag("albumartist"),
-        "album":        tag("album"),
+        "artist":       clean(tag("artist") or tag("albumartist")),
+        "album":        clean(tag("album")),
         "track_number": tag("tracknumber"),
         "genre":        tag("genre"),
         "year":         tag("date"),

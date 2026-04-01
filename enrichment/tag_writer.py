@@ -1,5 +1,9 @@
 # enrichment/tag_writer.py
+from pathlib import Path
+
 from mutagen import File as MutagenFile
+from mutagen.easyid3 import EasyID3
+from mutagen.id3 import ID3NoHeaderError
 
 
 class TagWriteError(Exception):
@@ -22,13 +26,26 @@ def write_tags(file_path: str, tags: dict) -> None:
     Only writes keys present in tags dict with non-None values.
     Raises TagWriteError if the file cannot be opened or written.
     """
+    ext = Path(file_path).suffix.lower()
     try:
-        audio = MutagenFile(file_path, easy=True)
+        if ext == ".mp3":
+            # MutagenFile(easy=True) can return a raw ID3 object for MP3s
+            # without an existing ID3v2 header, causing TypeError on assignment.
+            # Use EasyID3 directly so string assignment always works.
+            try:
+                audio = EasyID3(file_path)
+            except ID3NoHeaderError:
+                audio = EasyID3()
+        else:
+            audio = MutagenFile(file_path, easy=True)
+            if audio is None:
+                raise TagWriteError(f"Unsupported format or corrupt file: {file_path}")
+            if audio.tags is None:
+                audio.add_tags()
+    except TagWriteError:
+        raise
     except Exception as exc:
         raise TagWriteError(f"Cannot open {file_path}: {exc}") from exc
-
-    if audio is None:
-        raise TagWriteError(f"Unsupported format or corrupt file: {file_path}")
 
     for field, value in tags.items():
         easy_key = _EASY_FIELD_MAP.get(field)
@@ -36,6 +53,6 @@ def write_tags(file_path: str, tags: dict) -> None:
             audio[easy_key] = [str(value)]
 
     try:
-        audio.save()
+        audio.save(file_path)
     except Exception as exc:
         raise TagWriteError(f"Cannot save {file_path}: {exc}") from exc

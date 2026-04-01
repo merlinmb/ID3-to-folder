@@ -13,6 +13,8 @@ New-Item -ItemType Directory -Path $tempDir | Out-Null
 Copy-Item id3_organiser.py $tempDir/
 Copy-Item requirements.txt $tempDir/
 if (Test-Path "templates") { Copy-Item templates $tempDir/ -Recurse }
+if (Test-Path "enrichment") { Copy-Item enrichment $tempDir/ -Recurse }
+Get-ChildItem $tempDir -Recurse -Filter "__pycache__" -Directory | Remove-Item -Recurse -Force
 
 # Compress files for transfer (compress from inside tempDir to avoid backslash paths in zip)
 $zipFile = (Resolve-Path ".").Path + "\deploy_package.zip"
@@ -28,17 +30,24 @@ scp $zipFile "${remoteUser}@${remoteHost}:/tmp/"
 # SSH and deploy on remote
 Write-Host "Deploying on remote server..."
 $sshCmd = @"
-"	rm -rf $remotePath
-"	mkdir -p $remotePath
-"	unzip -o /tmp/deploy_package.zip -d $remotePath
-"	rm /tmp/deploy_package.zip
-"	cd $remotePath
-"	sudo apt-get install -y python3-venv 2>&1 | tail -1
-"	python3 -m venv .venv
-"	.venv/bin/pip install --upgrade pip
-"	.venv/bin/pip install -r requirements.txt
+set -ex
+rm -rf $remotePath
+mkdir -p $remotePath
+python3 -c "import zipfile; z=zipfile.ZipFile('/tmp/deploy_package.zip'); [setattr(m,'filename',m.filename.replace('\\\\','/')) or z.extract(m,'$remotePath') for m in z.infolist()]"
+rm -f /tmp/deploy_package.zip
+sudo apt-get install -y python3-venv python3-full 2>/dev/null || true
+python3 -m venv $remotePath
+source $remotePath/bin/activate
+pip3 install --upgrade pip
+pip3 install -r $remotePath/requirements.txt
 "@
-ssh ${remoteUser}@${remoteHost} ($sshCmd -replace "\r", "")
+
+# Write remote script with Unix line endings to avoid \r in paths
+$remoteScript = "deploy_remote.sh"
+[System.IO.File]::WriteAllText($remoteScript, ($sshCmd -replace "\r", ""))
+scp $remoteScript "${remoteUser}@${remoteHost}:/tmp/deploy_remote.sh"
+ssh ${remoteUser}@${remoteHost} "bash /tmp/deploy_remote.sh && rm /tmp/deploy_remote.sh"
+Remove-Item $remoteScript
 
 # Clean up
 Remove-Item $zipFile -Force
