@@ -168,6 +168,15 @@ def _migrate_db() -> None:
             WHERE TRIM(REPLACE(REPLACE(LOWER(album), CHAR(9), ' '), CHAR(10), ' '))
                   = 'unknown album'
         """)
+        conn.execute("""
+            UPDATE tracks
+            SET title             = NULL,
+                matched           = 0,
+                enrichment_status = CASE WHEN enrichment_status != 'in_progress'
+                                         THEN 'none' ELSE enrichment_status END
+            WHERE TRIM(REPLACE(REPLACE(LOWER(title), CHAR(9), ' '), CHAR(10), ' '))
+                  = 'unknown track'
+        """)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -192,7 +201,7 @@ def _parse_track_number(raw: str | None) -> str | None:
     return f"{int(m.group(1)):02d}" if m else None
 
 
-_UNKNOWN_PLACEHOLDERS = {"unknown artist", "unknown album"}
+_UNKNOWN_PLACEHOLDERS = {"unknown artist", "unknown album", "unknown track"}
 
 
 def _extract_metadata(file_path: str) -> dict:
@@ -215,7 +224,7 @@ def _extract_metadata(file_path: str) -> dict:
         return value
 
     meta = {
-        "title":        tag("title"),
+        "title":        clean(tag("title")),
         "artist":       clean(tag("artist") or tag("albumartist")),
         "album":        clean(tag("album")),
         "track_number": tag("tracknumber"),

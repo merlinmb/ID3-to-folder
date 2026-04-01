@@ -96,3 +96,32 @@ def test_music_file_handler_ignores_non_audio(db_path, tmp_path):
         event.src_path = fpath
         handler.on_created(event)
         mock_ingest.assert_not_called()
+
+
+@pytest.mark.parametrize("artist,album,title", [
+    ("Unknown Artist", "Real Album",    "Real Title"),
+    ("Real Artist",    "Unknown Album", "Real Title"),
+    ("Real Artist",    "Real Album",    "Unknown Track"),
+    ("UNKNOWN ARTIST", "Real Album",    "Real Title"),   # case variants
+    ("Real Artist",    "UNKNOWN ALBUM", "Real Title"),
+    ("Real Artist",    "Real Album",    "unknown track"),
+])
+def test_extract_metadata_nulls_placeholder_tags(artist, album, title):
+    """Any 'Unknown X' placeholder must come back as None so the track is flagged for enrichment."""
+    import unittest.mock
+    fake_audio = unittest.mock.MagicMock()
+    fake_audio.get.side_effect = lambda key: (
+        [artist]  if key == "artist" else
+        [album]   if key == "album"  else
+        [title]   if key == "title"  else
+        None
+    )
+    fake_audio.info.length = 120.0
+    with unittest.mock.patch("id3_organiser.MutagenFile", return_value=fake_audio):
+        meta = mod._extract_metadata("fake.mp3")
+    if artist.lower() == "unknown artist":
+        assert meta["artist"] is None, f"expected artist=None, got {meta['artist']!r}"
+    if album.lower() == "unknown album":
+        assert meta["album"] is None,  f"expected album=None, got {meta['album']!r}"
+    if title.lower() == "unknown track":
+        assert meta["title"] is None,  f"expected title=None, got {meta['title']!r}"
