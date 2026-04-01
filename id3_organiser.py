@@ -844,6 +844,17 @@ def main(source_dir: str, db: str, processed: str, unmatched: str,
     if not no_browser:
         threading.Timer(1.5, lambda: webbrowser.open(url)).start()
 
+    # ── Start enrichment scheduler in background ──────────────────────────────
+    global _enrichment_scheduler
+    from enrichment.pipeline import EnrichmentScheduler
+    cfg = {
+        "source_dir":     _config["source_dir"],
+        "processed_base": _config["processed_base"],
+        "unmatched_base": _config["unmatched_base"],
+    }
+    _enrichment_scheduler = EnrichmentScheduler(db, cfg, daily_limit=500, claude_limit=100)
+    _enrichment_scheduler.start()
+
     app.run(host="0.0.0.0", port=port, debug=False, use_reloader=False)
 
 

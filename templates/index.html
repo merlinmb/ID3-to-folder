@@ -928,7 +928,13 @@ async function rejectSelected() {
 }
 
 async function triggerRunNow() {
-  await fetch('/api/enrich/run-now', { method: 'POST' });
+  try {
+    const d = await fetchJson('/api/enrich/run-now', { method: 'POST' });
+    if (!d.ok) { alert('Enrichment scheduler is not running.\nStart the server with the enrich subcommand to enable this.'); return; }
+  } catch (e) {
+    alert('Failed to trigger run: ' + e.message);
+    return;
+  }
   loadEnrichStatus();
 }
 
