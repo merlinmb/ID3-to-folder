@@ -787,27 +787,32 @@ def api_enrich_apply_stream():
 # ─────────────────────────────────────────────────────────────────────────────
 
 @click.command(context_settings={"help_option_names": ["-h", "--help"]})
-@click.argument("source_dir", type=click.Path(exists=True, file_okay=False))
-@click.option("--db",        default="music_organiser.db", show_default=True,
-              help="SQLite database path.")
-@click.option("--processed", default="./processed",         show_default=True,
-              help="Base directory for organised files.")
-@click.option("--unmatched", default="./unmatched",         show_default=True,
-              help="Base directory for unmatched files.")
-@click.option("--port",      default=5000,                  show_default=True,
+@click.option("--port",           default=5000,                show_default=True,
               help="Web server port.")
-@click.option("--no-browser", is_flag=True,
+@click.option("--db",             default="music_organiser.db", show_default=True,
+              help="SQLite database path.")
+@click.option("--daily-limit",    default=500,                 show_default=True,
+              help="Max MusicBrainz lookups per day.")
+@click.option("--claude-limit",   default=100,                 show_default=True,
+              help="Max Claude AI lookups per day.")
+@click.option("--no-browser",     is_flag=True,
               help="Don't auto-open browser tab.")
-def main(source_dir: str, db: str, processed: str, unmatched: str,
-         port: int, no_browser: bool) -> None:
+@click.option("--run-now",        is_flag=True,
+              help="Trigger enrichment batch immediately on startup.")
+@click.option("--poll-watcher",   is_flag=True,
+              help="Use polling observer (required for NAS/network mounts).")
+@click.option("--watch-interval", default=60,                  show_default=True,
+              help="Poll interval in seconds (polling mode only).")
+def main(port: int, db: str, daily_limit: int, claude_limit: int,
+         no_browser: bool, run_now: bool,
+         poll_watcher: bool, watch_interval: int) -> None:
     """Organise a music library using ID3 / audio metadata tags.
 
-    SOURCE_DIR  Root directory to scan for .mp3 / .flac / .aac / .m4a files.
+    Scans /input, moves matched tracks to /destination,
+    and enriches unmatched tracks via heuristics / MusicBrainz / Claude.
     """
-    _config["db_path"]        = db
-    _config["source_dir"]     = os.path.abspath(source_dir)
-    _config["processed_base"] = os.path.abspath(processed)
-    _config["unmatched_base"] = os.path.abspath(unmatched)
+    global _enrichment_scheduler
+    _config["db_path"] = db
 
     # ── Banner ────────────────────────────────────────────────────────────────
     console.print()
@@ -828,10 +833,9 @@ def main(source_dir: str, db: str, processed: str, unmatched: str,
     info = Table(box=None, show_header=False, padding=(0, 2))
     info.add_column(justify="right", style="dim")
     info.add_column(style="cyan")
-    info.add_row("Source",     _config["source_dir"])
-    info.add_row("Database",   db)
-    info.add_row("Processed",  _config["processed_base"])
-    info.add_row("Unmatched",  _config["unmatched_base"])
+    info.add_row("Source",      SOURCE_DIR)
+    info.add_row("Destination", PROCESSED_BASE)
+    info.add_row("Database",    db)
     console.print(info)
     console.print()
     console.rule(style="dim #7c3aed")
@@ -845,18 +849,35 @@ def main(source_dir: str, db: str, processed: str, unmatched: str,
     files = _phase1_collect_files()
     console.print()
 
-    if not files:
-        console.print("[yellow]  No music files found — nothing to do.[/yellow]")
-        return
-
-    # ── Phase 2: extract metadata + persist ───────────────────────────────────
-    total, matched = _phase2_extract_and_store(files)
-
-    # ── Phase 3: summary ──────────────────────────────────────────────────────
-    _phase3_summary(total, matched)
+    # ── Phase 2 & 3: extract + summarise ─────────────────────────────────────
+    if files:
+        total, matched = _phase2_extract_and_store(files)
+        _phase3_summary(total, matched)
+    else:
+        console.print("[yellow]  No music files found in /input.[/yellow]")
     console.print()
     console.rule(style="dim #7c3aed")
     console.print()
+
+    # ── Enrichment scheduler ──────────────────────────────────────────────────
+    cfg = {
+        "source_dir":     SOURCE_DIR,
+        "processed_base": PROCESSED_BASE,
+        "unmatched_base": UNMATCHED_BASE,
+    }
+    _enrichment_scheduler = EnrichmentScheduler(db, cfg, daily_limit, claude_limit)
+    _enrichment_scheduler.start()
+    console.print(
+        "[dim]Enrichment scheduler started "
+        "(Stage 1 running now · Stage 2/3 at 02:00 daily).[/dim]"
+    )
+
+    if run_now:
+        console.print("[bold cyan]Triggering immediate enrichment batch…[/bold cyan]")
+        _enrichment_scheduler.run_now()
+
+    # ── Directory watcher ─────────────────────────────────────────────────────
+    _start_watcher(poll_watcher, watch_interval)
 
     # ── Web server ────────────────────────────────────────────────────────────
     url = f"http://localhost:{port}"
@@ -867,7 +888,7 @@ def main(source_dir: str, db: str, processed: str, unmatched: str,
                 ("  →  ", "dim"),
                 (url, "bold cyan underline"),
                 ("\n\n", ""),
-                ("  Review and edit destinations, then trigger file moves.\n", "dim"),
+                ("  Review destinations, trigger moves.\n", "dim"),
                 ("  Press Ctrl+C to stop the server.", "dim"),
             ),
             border_style="green",
@@ -882,82 +903,5 @@ def main(source_dir: str, db: str, processed: str, unmatched: str,
     app.run(host="0.0.0.0", port=port, debug=False, use_reloader=False)
 
 
-@click.command(context_settings={"help_option_names": ["-h", "--help"]})
-@click.argument("source_dir", type=click.Path(exists=True, file_okay=False))
-@click.option("--db",           default="music_organiser.db", show_default=True,
-              help="SQLite database path.")
-@click.option("--processed",    default="./processed",         show_default=True,
-              help="Base directory for organised files.")
-@click.option("--unmatched",    default="./unmatched",         show_default=True,
-              help="Base directory for unmatched files.")
-@click.option("--daily-limit",  default=500,                   show_default=True,
-              help="Max MusicBrainz lookups per day.")
-@click.option("--claude-limit", default=100,                   show_default=True,
-              help="Max Claude AI lookups per day.")
-@click.option("--run-now",      is_flag=True,
-              help="Run a batch immediately without waiting for daily schedule.")
-def enrich(source_dir: str, db: str, processed: str, unmatched: str,
-           daily_limit: int, claude_limit: int, run_now: bool) -> None:
-    """Run the tag enrichment pipeline for unmatched tracks.
-
-    SOURCE_DIR  Root directory (same as used with the organise command).
-    """
-    global _enrichment_scheduler
-    _config["db_path"]        = db
-    _config["source_dir"]     = os.path.abspath(source_dir)
-    _config["processed_base"] = os.path.abspath(processed)
-    _config["unmatched_base"] = os.path.abspath(unmatched)
-
-    _init_db()
-    _migrate_db()
-
-    cfg = {
-        "source_dir":     _config["source_dir"],
-        "processed_base": _config["processed_base"],
-        "unmatched_base": _config["unmatched_base"],
-    }
-
-    console.print()
-    console.print(
-        Panel.fit(
-            Text.assemble(
-                ("  ID3 Enrichment  ", "bold white on #4c1d95"),
-                (f"  daily limit: {daily_limit}  ", "bold #a78bfa on #4c1d95"),
-            ),
-            border_style="#7c3aed",
-            padding=(0, 2),
-        )
-    )
-    console.print()
-
-    _enrichment_scheduler = EnrichmentScheduler(db, cfg, daily_limit, claude_limit)
-    _enrichment_scheduler.start()
-
-    if run_now:
-        console.print("[bold cyan]Triggering immediate batch…[/bold cyan]")
-        _enrichment_scheduler.run_now()
-
-    console.print(
-        "[dim]Stage 1 (heuristics) running now. "
-        "Stage 2/3 scheduled daily at 02:00. Press Ctrl+C to stop.[/dim]"
-    )
-
-    try:
-        import time as _time
-        while True:
-            _time.sleep(60)
-    except KeyboardInterrupt:
-        console.print("\n[yellow]Enrichment stopped.[/yellow]")
-
-
-@click.group()
-def cli():
-    pass
-
-
-cli.add_command(main, name="organise")
-cli.add_command(enrich, name="enrich")
-
-
 if __name__ == "__main__":
-    cli()
+    main()

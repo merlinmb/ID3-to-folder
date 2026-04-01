@@ -11,9 +11,6 @@ import unittest.mock
 def client(tmp_path):
     db = str(tmp_path / "test.db")
     app_module._config["db_path"] = db
-    app_module._config["source_dir"] = str(tmp_path)
-    app_module._config["processed_base"] = str(tmp_path / "processed")
-    app_module._config["unmatched_base"] = str(tmp_path / "unmatched")
     app_module._init_db()
     app_module._migrate_db()
     app.config["TESTING"] = True
@@ -44,13 +41,14 @@ def test_wal_mode_enabled(client):
     assert mode == "wal"
 
 
-def test_enrich_command_exists():
-    from id3_organiser import enrich
+def test_main_command_help():
+    from id3_organiser import main
     runner = CliRunner()
-    result = runner.invoke(enrich, ["--help"])
+    result = runner.invoke(main, ["--help"])
     assert result.exit_code == 0
     assert "--daily-limit" in result.output
     assert "--run-now" in result.output
+    assert "--poll-watcher" in result.output
 
 
 import json as _json
@@ -62,9 +60,6 @@ import unittest.mock
 def client_with_candidate(tmp_path):
     db = str(tmp_path / "test.db")
     app_module._config["db_path"] = db
-    app_module._config["source_dir"] = str(tmp_path)
-    app_module._config["processed_base"] = str(tmp_path / "processed")
-    app_module._config["unmatched_base"] = str(tmp_path / "unmatched")
     app_module._init_db()
     app_module._migrate_db()
 
