@@ -9,3 +9,5 @@ docs
 docs/
 docs/*
 docs/superpowers
+.env
+data/
