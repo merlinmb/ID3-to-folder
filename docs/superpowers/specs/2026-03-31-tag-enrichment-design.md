@@ -98,19 +98,28 @@ A long-lived `enrich` process starts a scheduler thread that wakes daily to proc
 - `--daily-limit N` — max MusicBrainz lookups per day (default: 500)
 - `--run-now` — skip the daily schedule and run the next batch immediately
 
-### Stage 3 — Claude AI fallback (runs after Stage 2 in the same daily thread)
+### Stage 3 — Claude AI fallback (Anthropic Message Batches API)
 
-For tracks where MusicBrainz returned no useful result. Sends Claude a structured prompt containing:
-- Filename
-- Folder path
-- Any partial tags already in the DB
-- Filenames of neighbouring tracks in the same folder (context)
+For tracks where MusicBrainz returned no useful result. Uses the **Anthropic Message Batches API** (50% cost vs real-time calls) rather than synchronous per-track requests.
 
-Claude returns structured JSON: `{ artist, album, title, year, confidence }`.
+**Submit phase** (daily thread):
+- Collects up to `--claude-limit` (default: 100) tracks still needing enrichment
+- Builds one prompt per track containing: filename, folder path, partial tags, neighbouring filenames (up to 10)
+- Submits all prompts as a single batch via `client.messages.batches.create()`
+- Stores the returned `batch_id` in `enrichment_runs.claude_batch_id`
+- Continues without blocking — batch processing happens asynchronously on Anthropic's side
 
-Confidence from Claude is always treated as `low` unless the response is explicit and unambiguous — all Claude results go to the review queue.
+**Collect phase** (next daily tick or later):
+- Checks if a previous batch is pending (`enrichment_runs.claude_batch_id IS NOT NULL`)
+- Polls `client.messages.batches.retrieve(batch_id)` — if `processing_status != "ended"`, skips and waits for the next run
+- When ended: iterates `client.messages.batches.results(batch_id)`, writes one `enrichment_candidate` per succeeded result
+- Clears `claude_batch_id` after collecting
 
-**Rate limiting:** Claude calls are batched conservatively within the daily thread (max 100/day by default, configurable via `--claude-limit`).
+Claude returns structured JSON per track: `{ artist, album, title, year, confidence }`.
+
+Confidence from Claude is always treated as `low` — all Claude results go to the review queue.
+
+**`enrichment_runs` schema addition:** `claude_batch_id TEXT` column stores the in-flight Anthropic batch ID.
 
 ---
 
@@ -186,7 +195,7 @@ Existing track list gains an `enrichment_status` filter option:
 | Package | Purpose |
 |---|---|
 | `musicbrainzngs` | MusicBrainz API client |
-| `anthropic` | Claude API client (Stage 3 fallback) |
+| `anthropic>=0.25.0` | Claude API client + Message Batches API (Stage 3 fallback) |
 | `schedule` | Daily thread scheduling |
 
 ---
