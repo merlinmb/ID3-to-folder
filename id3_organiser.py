@@ -51,6 +51,10 @@ from rich.text import Text
 VERSION = "1.0.0"
 SUPPORTED_EXTENSIONS = {".mp3", ".flac", ".aac", ".m4a"}
 
+SOURCE_DIR     = "/input"
+PROCESSED_BASE = "/destination"
+UNMATCHED_BASE = "/destination/_unmatched"
+
 console = Console()
 app = Flask(__name__)
 
@@ -227,8 +231,8 @@ def _extract_metadata(file_path: str) -> dict:
 def _calculate_destination(meta: dict, original_path: str) -> tuple[str, bool]:
     """
     Return (destination_path, is_matched).
-    matched  → /processed/<Artist>/<Album>/<NN>. <Title>.ext
-    unmatched → /unmatched/<relative-original-path>
+    matched   → /destination/<Artist>/<Album>/<NN>. <Title>.ext
+    unmatched → /destination/_unmatched/<relative-original-path>
     """
     artist = meta.get("artist")
     album  = meta.get("album")
@@ -240,7 +244,7 @@ def _calculate_destination(meta: dict, original_path: str) -> tuple[str, bool]:
         prefix = f"{tn}. " if tn else ""
         filename = _sanitize(f"{prefix}{title}") + ext
         dest = (
-            Path(_config["processed_base"])
+            Path(PROCESSED_BASE)
             / _sanitize(artist)
             / _sanitize(album)
             / filename
@@ -248,10 +252,10 @@ def _calculate_destination(meta: dict, original_path: str) -> tuple[str, bool]:
         return str(dest), True
     else:
         try:
-            rel = Path(original_path).relative_to(_config["source_dir"])
+            rel = Path(original_path).relative_to(SOURCE_DIR)
         except ValueError:
             rel = Path(Path(original_path).name)
-        return str(Path(_config["unmatched_base"]) / rel), False
+        return str(Path(UNMATCHED_BASE) / rel), False
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -271,7 +275,7 @@ def _phase1_collect_files() -> list[str]:
         transient=True,
     ) as progress:
         progress.add_task("scan", total=None)
-        for root, _dirs, files in os.walk(_config["source_dir"]):
+        for root, _dirs, files in os.walk(SOURCE_DIR):
             for fname in files:
                 if Path(fname).suffix.lower() in SUPPORTED_EXTENSIONS:
                     found.append(os.path.join(root, fname))
@@ -279,7 +283,7 @@ def _phase1_collect_files() -> list[str]:
     console.print(
         f"  [bold green]✓[/bold green]  Found "
         f"[bold white]{len(found)}[/bold white] music files"
-        f"  [dim]({_config['source_dir']})[/dim]"
+        f"  [dim]({SOURCE_DIR})[/dim]"
     )
     return found
 
@@ -351,12 +355,12 @@ def _phase3_summary(total: int, matched: int) -> None:
     tbl.add_row(
         "Matched",
         f"[bold green]{matched}[/bold green]  "
-        f"[dim]→  {_config['processed_base']}[/dim]",
+        f"[dim]→  {PROCESSED_BASE}[/dim]",
     )
     tbl.add_row(
         "Unmatched",
         f"[bold yellow]{unmatched}[/bold yellow]  "
-        f"[dim]→  {_config['unmatched_base']}[/dim]",
+        f"[dim]→  {UNMATCHED_BASE}[/dim]",
     )
 
     console.print()
