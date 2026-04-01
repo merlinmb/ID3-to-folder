@@ -20,6 +20,12 @@ def _is_valid_tag(value: str | None) -> bool:
     return bool(value) and value.strip().lower() not in _UNKNOWN_PLACEHOLDERS
 
 
+def _scrub(value: str | None) -> str | None:
+    if value and value.strip().lower() in _UNKNOWN_PLACEHOLDERS:
+        return None
+    return value
+
+
 def _sanitize(name: str | None, fallback: str = "Unknown") -> str:
     if not name:
         return fallback
@@ -77,9 +83,9 @@ def run_stage1(db_path: str, cfg: dict) -> None:
     for track in tracks:
         suggestion = extract_from_path(track["original_path"], cfg["source_dir"])
         merged = {
-            "artist":       track["artist"] or suggestion.get("artist"),
-            "album":        track["album"]  or suggestion.get("album"),
-            "title":        track["title"]  or suggestion.get("title"),
+            "artist":       _scrub(track["artist"]) or suggestion.get("artist"),
+            "album":        _scrub(track["album"])  or suggestion.get("album"),
+            "title":        _scrub(track["title"])  or suggestion.get("title"),
             "track_number": track["track_number"] or suggestion.get("track_number"),
         }
         confidence = suggestion.get("confidence", "low")

@@ -209,6 +209,13 @@ def _is_valid_tag(value: str | None) -> bool:
     return bool(value) and value.strip().lower() not in _UNKNOWN_PLACEHOLDERS
 
 
+def _scrub(value: str | None) -> str | None:
+    """Return None for any known placeholder string; pass other values through."""
+    if value and value.strip().lower() in _UNKNOWN_PLACEHOLDERS:
+        return None
+    return value
+
+
 def _extract_metadata(file_path: str) -> dict:
     """Return a normalised tag dict for a music file (easy=True flattens formats)."""
     try:
@@ -338,10 +345,10 @@ def _phase2_extract_and_store(files: list[str]) -> tuple[int, int]:
                     (
                         fpath,
                         Path(fpath).name,
-                        meta.get("artist"),
-                        meta.get("album"),
+                        _scrub(meta.get("artist")),
+                        _scrub(meta.get("album")),
                         meta.get("track_number"),
-                        meta.get("title"),
+                        _scrub(meta.get("title")),
                         meta.get("genre"),
                         meta.get("year"),
                         meta.get("duration"),
@@ -406,10 +413,10 @@ def _ingest_file(fpath: str) -> None:
             (
                 fpath,
                 Path(fpath).name,
-                meta.get("artist"),
-                meta.get("album"),
+                _scrub(meta.get("artist")),
+                _scrub(meta.get("album")),
                 meta.get("track_number"),
-                meta.get("title"),
+                _scrub(meta.get("title")),
                 meta.get("genre"),
                 meta.get("year"),
                 meta.get("duration"),
