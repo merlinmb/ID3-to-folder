@@ -1,6 +1,6 @@
 services:
   id3-organiser:
-    build: .
+    image: id3-organiser
     ports:
       - "${PORT:-5000}:5000"
     volumes:
