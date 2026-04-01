@@ -531,12 +531,32 @@ def api_stats():
 
 @app.route("/api/export/csv")
 def api_export_csv():
+    status         = request.args.get("status", "all")
+    match          = request.args.get("match",  "all")
+    search         = request.args.get("q", "").strip()
+    enrich_filter  = request.args.get("enrichment", "all")
+
+    sql    = ("SELECT filename, artist, album, track_number, title, genre, year, "
+              "duration, original_path, destination_path FROM tracks WHERE 1=1")
+    params: list = []
+
+    if status != "all":
+        sql += " AND status = ?";        params.append(status)
+    if match == "matched":
+        sql += " AND matched = 1"
+    elif match == "unmatched":
+        sql += " AND matched = 0"
+    if enrich_filter != "all":
+        sql += " AND enrichment_status = ?"; params.append(enrich_filter)
+    if search:
+        like = f"%{search}%"
+        sql += " AND (artist LIKE ? OR album LIKE ? OR title LIKE ? OR filename LIKE ?)"
+        params.extend([like, like, like, like])
+
+    sql += " ORDER BY artist NULLS LAST, album NULLS LAST, track_number, title"
+
     with _get_db() as conn:
-        rows = conn.execute(
-            "SELECT filename, artist, album, track_number, title, genre, year, "
-            "duration, original_path, destination_path FROM tracks "
-            "ORDER BY artist NULLS LAST, album NULLS LAST, track_number, title"
-        ).fetchall()
+        rows = conn.execute(sql, params).fetchall()
 
     buf = io.StringIO()
     writer = csv.writer(buf)

@@ -338,7 +338,7 @@
     <i class="bi bi-send-fill me-1"></i>Move All Pending
   </button>
   <span class="selected-count" id="selCount"></span>
-  <button class="btn btn-sm btn-outline-info ms-auto" onclick="window.location='/api/export/csv'">
+  <button class="btn btn-sm btn-outline-info ms-auto" onclick="exportCsv()">
     <i class="bi bi-download me-1"></i>Export CSV
   </button>
 </div>
@@ -789,6 +789,19 @@ function resetFilters() {
   document.getElementById('enrichFilter').value  = 'all';
   currentPage = 1;
   loadTracks();
+}
+
+function exportCsv() {
+  const params = new URLSearchParams();
+  const q      = document.getElementById('searchInput').value.trim();
+  const status = document.getElementById('statusFilter').value;
+  const match  = document.getElementById('matchFilter').value;
+  const enrich = document.getElementById('enrichFilter')?.value || 'all';
+  if (status !== 'all')  params.set('status',      status);
+  if (match  !== 'all')  params.set('match',        match);
+  if (enrich !== 'all')  params.set('enrichment',   enrich);
+  if (q)                 params.set('q',            q);
+  window.location = '/api/export/csv?' + params;
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
