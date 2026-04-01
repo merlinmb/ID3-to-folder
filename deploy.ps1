@@ -44,15 +44,17 @@ scp $imageTar   "${remoteUser}@${remoteHost}:/tmp/"
 scp $zipFile    "${remoteUser}@${remoteHost}:/tmp/"
 
 # ── 5. Deploy on remote ───────────────────────────────────────────────────────
-# mkdir -p preserves data/ (SQLite DB) across deploys
+# docker compose down stops and removes the container but NOT bind-mount volumes,
+# so data/ (SQLite DB) is preserved across deploys.
 $sshCmd = @"
 set -ex
-docker load -i /tmp/$imageTar
-rm -f /tmp/$imageTar
 mkdir -p $remotePath
 python3 -c "import zipfile; z=zipfile.ZipFile('/tmp/deploy_package.zip'); [setattr(m,'filename',m.filename.replace('\\\\','/')) or z.extract(m,'$remotePath') for m in z.infolist()]"
 rm -f /tmp/deploy_package.zip
 cd $remotePath
+docker compose down
+docker load -i /tmp/$imageTar
+rm -f /tmp/$imageTar
 docker compose up -d
 docker compose ps
 "@
