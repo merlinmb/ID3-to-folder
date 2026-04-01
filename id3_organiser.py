@@ -25,6 +25,7 @@ from pathlib import Path
 
 import click
 from enrichment.pipeline import EnrichmentScheduler
+from watchdog.events import FileSystemEventHandler
 from flask import Flask, Response, jsonify, render_template, request, stream_with_context
 from mutagen import File as MutagenFile
 from rich import box
@@ -372,6 +373,67 @@ def _phase3_summary(total: int, matched: int) -> None:
             padding=(1, 2),
         )
     )
+
+
+def _ingest_file(fpath: str) -> None:
+    """Extract metadata from a single file and upsert into DB."""
+    meta = _extract_metadata(fpath)
+    dest, is_matched = _calculate_destination(meta, fpath)
+    now = datetime.now().isoformat()
+    with _get_db() as conn:
+        conn.execute(
+            """
+            INSERT OR REPLACE INTO tracks
+                (original_path, filename, artist, album, track_number,
+                 title, genre, year, duration, destination_path,
+                 matched, status, scanned_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)
+            """,
+            (
+                fpath,
+                Path(fpath).name,
+                meta.get("artist"),
+                meta.get("album"),
+                meta.get("track_number"),
+                meta.get("title"),
+                meta.get("genre"),
+                meta.get("year"),
+                meta.get("duration"),
+                dest,
+                1 if is_matched else 0,
+                now,
+            ),
+        )
+    console.print(
+        f"  [cyan]+ Watcher:[/cyan] {Path(fpath).name}"
+        f"  [dim]({'matched' if is_matched else 'needs enrichment'})[/dim]"
+    )
+
+
+class MusicFileHandler(FileSystemEventHandler):
+    def on_created(self, event):
+        if (not event.is_directory
+                and Path(event.src_path).suffix.lower() in SUPPORTED_EXTENSIONS):
+            _ingest_file(event.src_path)
+
+    def on_moved(self, event):
+        if (not event.is_directory
+                and Path(event.dest_path).suffix.lower() in SUPPORTED_EXTENSIONS):
+            _ingest_file(event.dest_path)
+
+
+def _start_watcher(use_polling: bool, interval: int) -> None:
+    from watchdog.observers import Observer
+    from watchdog.observers.polling import PollingObserver
+
+    ObserverClass = PollingObserver if use_polling else Observer
+    kwargs = {"timeout": interval} if use_polling else {}
+    observer = ObserverClass(**kwargs)
+    observer.schedule(MusicFileHandler(), SOURCE_DIR, recursive=True)
+    observer.daemon = True
+    observer.start()
+    mode = f"polling every {interval}s" if use_polling else "inotify"
+    console.print(f"[dim]Directory watcher started ({mode}) on {SOURCE_DIR}[/dim]")
 
 
 # ─────────────────────────────────────────────────────────────────────────────

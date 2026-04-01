@@ -22,3 +22,77 @@ def test_calculate_destination_unmatched_all_missing():
     dest, matched = mod._calculate_destination({}, "/some/other/track.flac")
     assert matched is False
     assert "track.flac" in dest
+
+
+import sqlite3
+import unittest.mock
+
+
+@pytest.fixture
+def db_path(tmp_path):
+    db = str(tmp_path / "test.db")
+    mod._config["db_path"] = db
+    mod._init_db()
+    mod._migrate_db()
+    return db
+
+
+def test_ingest_file_inserts_row(db_path, tmp_path):
+    fpath = str(tmp_path / "song.mp3")
+    Path(fpath).touch()
+    with unittest.mock.patch.object(mod, "_extract_metadata", return_value={
+        "artist": "Test Artist", "album": "Test Album", "title": "Test Song",
+        "track_number": "1", "genre": None, "year": None, "duration": 180.0,
+    }):
+        mod._ingest_file(fpath)
+    conn = sqlite3.connect(db_path)
+    row = conn.execute("SELECT * FROM tracks WHERE original_path=?", (fpath,)).fetchone()
+    conn.close()
+    assert row is not None
+
+
+def test_ingest_file_upserts_on_rescan(db_path, tmp_path):
+    fpath = str(tmp_path / "song.mp3")
+    Path(fpath).touch()
+    tags = {"artist": "A", "album": "B", "title": "C", "track_number": None,
+            "genre": None, "year": None, "duration": None}
+    with unittest.mock.patch.object(mod, "_extract_metadata", return_value=tags):
+        mod._ingest_file(fpath)
+        mod._ingest_file(fpath)
+    conn = sqlite3.connect(db_path)
+    count = conn.execute("SELECT COUNT(*) FROM tracks WHERE original_path=?", (fpath,)).fetchone()[0]
+    conn.close()
+    assert count == 1
+
+
+def test_music_file_handler_on_created(db_path, tmp_path):
+    fpath = str(tmp_path / "new_track.mp3")
+    Path(fpath).touch()
+    with unittest.mock.patch.object(mod, "_ingest_file") as mock_ingest:
+        handler = mod.MusicFileHandler()
+        event = unittest.mock.Mock()
+        event.is_directory = False
+        event.src_path = fpath
+        handler.on_created(event)
+        mock_ingest.assert_called_once_with(fpath)
+
+
+def test_music_file_handler_ignores_directories(db_path, tmp_path):
+    with unittest.mock.patch.object(mod, "_ingest_file") as mock_ingest:
+        handler = mod.MusicFileHandler()
+        event = unittest.mock.Mock()
+        event.is_directory = True
+        event.src_path = str(tmp_path)
+        handler.on_created(event)
+        mock_ingest.assert_not_called()
+
+
+def test_music_file_handler_ignores_non_audio(db_path, tmp_path):
+    fpath = str(tmp_path / "readme.txt")
+    with unittest.mock.patch.object(mod, "_ingest_file") as mock_ingest:
+        handler = mod.MusicFileHandler()
+        event = unittest.mock.Mock()
+        event.is_directory = False
+        event.src_path = fpath
+        handler.on_created(event)
+        mock_ingest.assert_not_called()
