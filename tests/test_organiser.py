@@ -18,6 +18,18 @@ def test_calculate_destination_unmatched_missing_title():
     assert dest.startswith(str(Path(mod.UNMATCHED_BASE)))
 
 
+@pytest.mark.parametrize("meta", [
+    {"artist": "Unknown Artist", "album": "OK Computer",    "title": "Karma Police"},
+    {"artist": "Radiohead",      "album": "Unknown Album",  "title": "Karma Police"},
+    {"artist": "Radiohead",      "album": "OK Computer",    "title": "Unknown Track"},
+    {"artist": "UNKNOWN ARTIST", "album": "OK Computer",    "title": "Karma Police"},
+])
+def test_calculate_destination_rejects_placeholder_tags(meta):
+    """Placeholder values in the DB must never produce a matched=True destination."""
+    dest, matched = mod._calculate_destination(meta, f"{mod.SOURCE_DIR}/track.mp3")
+    assert matched is False, f"expected unmatched for {meta}"
+
+
 def test_calculate_destination_unmatched_all_missing():
     dest, matched = mod._calculate_destination({}, "/some/other/track.flac")
     assert matched is False

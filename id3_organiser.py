@@ -204,6 +204,11 @@ def _parse_track_number(raw: str | None) -> str | None:
 _UNKNOWN_PLACEHOLDERS = {"unknown artist", "unknown album", "unknown track"}
 
 
+def _is_valid_tag(value: str | None) -> bool:
+    """Return False for None or any known ripping-software placeholder string."""
+    return bool(value) and value.strip().lower() not in _UNKNOWN_PLACEHOLDERS
+
+
 def _extract_metadata(file_path: str) -> dict:
     """Return a normalised tag dict for a music file (easy=True flattens formats)."""
     try:
@@ -249,7 +254,7 @@ def _calculate_destination(meta: dict, original_path: str) -> tuple[str, bool]:
     title  = meta.get("title")
     ext    = Path(original_path).suffix.lower()
 
-    if artist and album and title:
+    if _is_valid_tag(artist) and _is_valid_tag(album) and _is_valid_tag(title):
         tn = _parse_track_number(meta.get("track_number"))
         prefix = f"{tn}. " if tn else ""
         filename = _sanitize(f"{prefix}{title}") + ext

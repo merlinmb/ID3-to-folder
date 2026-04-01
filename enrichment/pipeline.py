@@ -13,6 +13,11 @@ from .heuristics import apply_folder_grouping, extract_from_path
 from .tag_writer import TagWriteError, write_tags
 
 _UNSAFE = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
+_UNKNOWN_PLACEHOLDERS = {"unknown artist", "unknown album", "unknown track"}
+
+
+def _is_valid_tag(value: str | None) -> bool:
+    return bool(value) and value.strip().lower() not in _UNKNOWN_PLACEHOLDERS
 
 
 def _sanitize(name: str | None, fallback: str = "Unknown") -> str:
@@ -35,7 +40,7 @@ def _calc_destination(meta: dict, original_path: str, cfg: dict) -> tuple[str, b
     title  = meta.get("title")
     ext    = Path(original_path).suffix.lower()
 
-    if artist and album and title:
+    if _is_valid_tag(artist) and _is_valid_tag(album) and _is_valid_tag(title):
         tn     = _parse_track_number(meta.get("track_number"))
         prefix = f"{tn}. " if tn else ""
         fname  = _sanitize(f"{prefix}{title}") + ext
