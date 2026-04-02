@@ -1,10 +1,13 @@
 # enrichment/musicbrainz.py
+import logging
 import time
 from difflib import SequenceMatcher
 
 import musicbrainzngs
 
 musicbrainzngs.set_useragent("ID3MusicOrganiser", "1.0", "id3organiser@local")
+
+logger = logging.getLogger(__name__)
 
 
 class MusicBrainzError(Exception):
@@ -31,20 +34,25 @@ def query_musicbrainz(
     if album:
         kwargs["release"] = album
 
+    logger.info("MusicBrainz query: artist=%r album=%r title=%r", artist, album, title)
     for attempt in range(retries):
         try:
             result = musicbrainzngs.search_recordings(**kwargs)
             break
-        except musicbrainzngs.ResponseError:
+        except musicbrainzngs.ResponseError as exc:
+            logger.warning("MusicBrainz ResponseError: %s", exc)
             return None
-        except musicbrainzngs.NetworkError:
+        except musicbrainzngs.NetworkError as exc:
             if attempt < retries - 1:
+                logger.warning("MusicBrainz NetworkError (attempt %d/%d): %s — retrying", attempt + 1, retries, exc)
                 time.sleep(2 ** attempt)
             else:
+                logger.error("MusicBrainz NetworkError: all %d attempts exhausted", retries)
                 return None
 
     recordings = result.get("recording-list", [])
     if not recordings:
+        logger.info("MusicBrainz: no recordings found for artist=%r title=%r", artist, title)
         return None
 
     best = recordings[0]

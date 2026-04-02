@@ -202,6 +202,27 @@
     .enrich-stat .lbl { font-size: .68rem; color: #64748b; text-transform: uppercase; }
 
     /* ── Inline editable cells ───────────────────────────────────── */
+    .tag-cell {
+      display: flex;
+      align-items: center;
+      gap: 2px;
+    }
+    .tag-clear {
+      flex-shrink: 0;
+      width: 14px;
+      height: 14px;
+      padding: 0;
+      border: none;
+      background: none;
+      color: #475569;
+      font-size: 13px;
+      line-height: 1;
+      cursor: pointer;
+      opacity: 0;
+      transition: opacity .12s, color .12s;
+    }
+    .tag-cell:has(.tag-input:not(:placeholder-shown)) .tag-clear { opacity: 1; }
+    .tag-clear:hover { color: #f87171; }
     .editable-cell {
       background: transparent;
       border: 1px solid transparent;
@@ -519,6 +540,82 @@ document.addEventListener('DOMContentLoaded', () => {
   ['statusFilter','matchFilter','perPage','enrichFilter'].forEach(id => {
     document.getElementById(id).addEventListener('change', () => { currentPage = 1; loadTracks(); });
   });
+  // ─── Tag field inline editing (artist / album / track# / title) ─────────────
+  const SCRUB_PLACEHOLDERS = new Set(['unknown artist', 'unknown album', 'unknown track']);
+  const tbody = document.getElementById('tracksTbody');
+
+  tbody.addEventListener('focusin', e => {
+    const inp = e.target.closest('.tag-input');
+    if (inp) inp.dataset.original = inp.value;
+  });
+
+  tbody.addEventListener('keydown', e => {
+    const inp = e.target.closest('.tag-input');
+    if (!inp) return;
+    if (e.key === 'Enter')  { e.preventDefault(); inp.blur(); }
+    if (e.key === 'Escape') { inp.value = inp.dataset.original ?? inp.value; inp.blur(); }
+  });
+
+  tbody.addEventListener('focusout', async e => {
+    const inp = e.target.closest('.tag-input');
+    if (!inp) return;
+    const newVal  = inp.value.trim();
+    const origVal = inp.dataset.original ?? '';
+    if (newVal === origVal) return;
+    const scrubbed = SCRUB_PLACEHOLDERS.has(newVal.toLowerCase()) ? '' : newVal;
+    const id    = inp.dataset.id;
+    const field = inp.dataset.field;
+    try {
+      const res = await fetchJson(`/api/tracks/${id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ [field]: scrubbed || null }),
+      });
+      inp.value = scrubbed;
+      inp.dataset.original = scrubbed;
+      const track = allTracks.find(t => t.id === parseInt(id));
+      if (track) {
+        track[field] = scrubbed || null;
+        if (res?.destination_path) {
+          track.destination_path = res.destination_path;
+          const destSpan  = document.querySelector(`#destCell-${id} .dest-display`);
+          const destInput = document.querySelector(`#destCell-${id} .dest-input`);
+          if (destSpan)  { destSpan.textContent = res.destination_path; destSpan.title = res.destination_path; }
+          if (destInput) { destInput.value = res.destination_path; }
+        }
+      }
+    } catch { inp.value = origVal; inp.dataset.original = origVal; }
+  });
+
+  tbody.addEventListener('click', async e => {
+    const btn = e.target.closest('.tag-clear');
+    if (!btn) return;
+    const id    = btn.dataset.id;
+    const field = btn.dataset.field;
+    const inp   = tbody.querySelector(`.tag-input[data-id="${id}"][data-field="${field}"]`);
+    if (!inp || inp.value === '') return;
+    try {
+      const res = await fetchJson(`/api/tracks/${id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ [field]: null }),
+      });
+      inp.value = '';
+      inp.dataset.original = '';
+      const track = allTracks.find(t => t.id === parseInt(id));
+      if (track) {
+        track[field] = null;
+        if (res?.destination_path) {
+          track.destination_path = res.destination_path;
+          const destSpan  = document.querySelector(`#destCell-${id} .dest-display`);
+          const destInput = document.querySelector(`#destCell-${id} .dest-input`);
+          if (destSpan)  { destSpan.textContent = res.destination_path; destSpan.title = res.destination_path; }
+          if (destInput) { destInput.value = res.destination_path; }
+        }
+      }
+    } catch { /* leave as-is on error */ }
+  });
+
   document.getElementById('selectAll').addEventListener('change', e => {
     allTracks.forEach(t => {
       if (e.target.checked) selectedIds.add(t.id);
@@ -588,10 +685,10 @@ function rowHtml(t) {
     <td><input type="checkbox" class="form-check-input row-check" data-id="${t.id}" ${checked} onchange="toggleRow(${t.id}, this.checked)" /></td>
     <td>${statusIcon}</td>
     <td class="ellipsis" title="${esc(t.original_path)}">${esc(t.filename)}</td>
-    <td class="ellipsis" title="${esc(t.artist||'')}">${esc(t.artist||'')}</td>
-    <td class="ellipsis" title="${esc(t.album||'')}">${esc(t.album||'')}</td>
-    <td style="text-align:center">${esc(t.track_number||'')}</td>
-    <td class="ellipsis">${esc(t.title||'')}</td>
+    <td><div class="tag-cell"><input class="editable-cell tag-input" data-id="${t.id}" data-field="artist"       value="${esc(t.artist||'')}"       placeholder="—" /><button class="tag-clear" data-id="${t.id}" data-field="artist"       title="Clear artist">×</button></div></td>
+    <td><div class="tag-cell"><input class="editable-cell tag-input" data-id="${t.id}" data-field="album"        value="${esc(t.album||'')}"        placeholder="—" /><button class="tag-clear" data-id="${t.id}" data-field="album"        title="Clear album">×</button></div></td>
+    <td><div class="tag-cell"><input class="editable-cell tag-input" data-id="${t.id}" data-field="track_number" value="${esc(t.track_number||'')}" placeholder="—" style="width:2.8rem;text-align:center" /><button class="tag-clear" data-id="${t.id}" data-field="track_number" title="Clear track #">×</button></div></td>
+    <td><div class="tag-cell"><input class="editable-cell tag-input" data-id="${t.id}" data-field="title"        value="${esc(t.title||'')}"        placeholder="—" /><button class="tag-clear" data-id="${t.id}" data-field="title"        title="Clear title">×</button></div></td>
     <td class="path-col">
       <div class="dest-cell" id="destCell-${t.id}">
         <span class="dest-display" title="${dest}" onclick="startEdit(${t.id})">${dest}</span>

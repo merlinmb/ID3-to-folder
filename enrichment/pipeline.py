@@ -1,5 +1,6 @@
 # enrichment/pipeline.py
 import json
+import logging
 import re
 import sqlite3
 import threading
@@ -11,6 +12,8 @@ import schedule
 
 from .heuristics import apply_folder_grouping, extract_from_path
 from .tag_writer import TagWriteError, write_tags
+
+logger = logging.getLogger(__name__)
 
 _UNSAFE = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
 _UNKNOWN_PLACEHOLDERS = {"unknown artist", "unknown album", "unknown track"}
@@ -77,15 +80,16 @@ def run_stage1(db_path: str, cfg: dict) -> None:
     tracks = [dict(r) for r in rows]
     conn.close()
 
+    logger.info("Stage 1 (heuristics): %d tracks to process", len(tracks))
     tracks = apply_folder_grouping(tracks)
     now = datetime.now().isoformat()
 
     for track in tracks:
         suggestion = extract_from_path(track["original_path"], cfg["source_dir"])
         merged = {
-            "artist":       _scrub(track["artist"]) or suggestion.get("artist"),
-            "album":        _scrub(track["album"])  or suggestion.get("album"),
-            "title":        _scrub(track["title"])  or suggestion.get("title"),
+            "artist":       _scrub(track["artist"]) or _scrub(suggestion.get("artist")),
+            "album":        _scrub(track["album"])  or _scrub(suggestion.get("album")),
+            "title":        _scrub(track["title"])  or _scrub(suggestion.get("title")),
             "track_number": track["track_number"] or suggestion.get("track_number"),
         }
         confidence = suggestion.get("confidence", "low")
@@ -94,8 +98,12 @@ def run_stage1(db_path: str, cfg: dict) -> None:
                 and merged["artist"] and merged["album"] and merged["title"]):
             try:
                 write_tags(track["original_path"], merged)
-            except TagWriteError:
-                pass
+                logger.info(
+                    "Stage 1 auto-applied tags: track_id=%d artist=%r album=%r title=%r",
+                    track["id"], merged["artist"], merged["album"], merged["title"],
+                )
+            except TagWriteError as exc:
+                logger.warning("Stage 1 tag write failed for track_id=%d: %s", track["id"], exc)
             dest, is_matched = _calc_destination(merged, track["original_path"], cfg)
             conn = _get_conn(db_path)
             conn.execute(
@@ -109,6 +117,11 @@ def run_stage1(db_path: str, cfg: dict) -> None:
             conn.close()
         else:
             if merged.get("artist") or merged.get("album") or merged.get("title"):
+                logger.info(
+                    "Stage 1 candidate queued: track_id=%d artist=%r album=%r title=%r confidence=%s",
+                    track["id"], merged.get("artist"), merged.get("album"),
+                    merged.get("title"), confidence,
+                )
                 conn = _get_conn(db_path)
                 conn.execute(
                     "INSERT OR IGNORE INTO enrichment_candidates "
@@ -124,6 +137,8 @@ def run_stage1(db_path: str, cfg: dict) -> None:
                 )
                 conn.commit()
                 conn.close()
+
+    logger.info("Stage 1 complete")
 
 
 def run_stage2_batch(db_path: str, cfg: dict, daily_limit: int, claude_limit: int) -> None:
@@ -142,10 +157,19 @@ def run_stage2_batch(db_path: str, cfg: dict, daily_limit: int, claude_limit: in
     conn.close()
 
     if pending_run:
+        logger.info("Collecting pending Claude batch: %s", pending_run["claude_batch_id"])
         results = collect_claude_batch(pending_run["claude_batch_id"])
-        if results is not None:
+        if results is None:
+            logger.info("Claude batch %s still processing — will retry next run", pending_run["claude_batch_id"])
+        else:
+            logger.info("Claude batch %s returned %d result(s)", pending_run["claude_batch_id"], len(results))
             for item in results:
                 s = item["suggestion"]
+                logger.info(
+                    "Claude result: track_id=%d artist=%r album=%r title=%r year=%r",
+                    item["track_id"], s.get("artist"), s.get("album"),
+                    s.get("title"), s.get("year"),
+                )
                 conn = _get_conn(db_path)
                 conn.execute(
                     "INSERT INTO enrichment_candidates "
@@ -180,10 +204,17 @@ def run_stage2_batch(db_path: str, cfg: dict, daily_limit: int, claude_limit: in
     run_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
 
     # --- Tracks still needing enrichment ---
+    # Include matched=0 regardless of enrichment_status — a heuristic apply can
+    # set status='enriched' but leave matched=0 (no album), so MusicBrainz must
+    # still run.  The NOT EXISTS guard prevents re-querying tracks already tried.
     rows = conn.execute(
-        "SELECT t.id, t.original_path, t.filename, t.artist, t.album, t.title "
+        "SELECT t.id, t.original_path, t.filename, t.artist, t.album, t.title, "
+        "  (SELECT suggested_artist FROM enrichment_candidates "
+        "   WHERE track_id=t.id AND source='heuristic' ORDER BY id DESC LIMIT 1) AS hint_artist, "
+        "  (SELECT suggested_title FROM enrichment_candidates "
+        "   WHERE track_id=t.id AND source='heuristic' ORDER BY id DESC LIMIT 1) AS hint_title "
         "FROM tracks t "
-        "WHERE t.matched=0 AND t.enrichment_status NOT IN ('enriched') "
+        "WHERE t.matched=0 "
         "AND NOT EXISTS ("
         "  SELECT 1 FROM enrichment_candidates ec "
         "  WHERE ec.track_id=t.id AND ec.source='musicbrainz'"
@@ -194,18 +225,28 @@ def run_stage2_batch(db_path: str, cfg: dict, daily_limit: int, claude_limit: in
     tracks = [dict(r) for r in rows]
     conn.close()
 
+    logger.info("Stage 2: %d track(s) queued for MusicBrainz (daily_limit=%d)", len(tracks), daily_limit)
     mb_processed = 0
     needs_claude: list[dict] = []
 
     for track in tracks:
+        # Use heuristic suggestions when the tracks table still has null artist/title
+        # (Stage 1 creates candidates without updating tracks unless auto-applying)
+        artist = track.get("artist") or track.get("hint_artist")
+        title  = (track.get("title") or track.get("hint_title")
+                  or Path(track["original_path"]).stem)
         result = query_musicbrainz(
-            track.get("artist"), track.get("album"),
-            track.get("title") or Path(track["original_path"]).stem
+            artist, track.get("album"), title
         )
         mb_processed += 1
         time.sleep(1.1)  # MusicBrainz: 1 req/sec
 
         if result:
+            logger.info(
+                "MusicBrainz hit: track_id=%d artist=%r album=%r title=%r year=%r confidence=%s",
+                track["id"], result.get("artist"), result.get("album"),
+                result.get("title"), result.get("year"), result.get("confidence"),
+            )
             conn = _get_conn(db_path)
             conn.execute(
                 "INSERT INTO enrichment_candidates "
@@ -223,6 +264,7 @@ def run_stage2_batch(db_path: str, cfg: dict, daily_limit: int, claude_limit: in
             conn.commit()
             conn.close()
         else:
+            logger.info("MusicBrainz no result: track_id=%d filename=%r — queuing for Claude", track["id"], track["filename"])
             needs_claude.append(track)
 
     # --- Submit Claude batch for tracks MusicBrainz couldn't resolve ---
@@ -243,13 +285,20 @@ def run_stage2_batch(db_path: str, cfg: dict, daily_limit: int, claude_limit: in
                 "track_id":    t["id"],
                 "filename":    t["filename"],
                 "folder_path": folder,
-                "partial_tags": {k: t.get(k) for k in ("artist", "album", "title")},
+                "partial_tags": {
+                    "artist": t.get("artist") or t.get("hint_artist"),
+                    "album":  t.get("album"),
+                    "title":  t.get("title") or t.get("hint_title"),
+                },
                 "neighbours":  neighbours[:10],
             })
 
+        logger.info("Submitting Claude batch: %d track(s)", len(batch_inputs))
         try:
             batch_id = submit_claude_batch(batch_inputs)
-        except Exception:
+            logger.info("Claude batch submitted: batch_id=%s", batch_id)
+        except Exception as exc:
+            logger.error("Claude batch submission failed: %s", exc)
             batch_id = None
 
     # --- Update run record ---
@@ -310,17 +359,24 @@ class EnrichmentScheduler:
         with self._lock:
             self._status["running"] = True
             self._status["last_run"] = datetime.now().isoformat()
+        logger.info("Stage 2 batch started")
         try:
             run_stage2_batch(self.db_path, self.cfg, self.daily_limit, self.claude_limit)
             with self._lock:
                 self._status["tracks_processed_today"] = self.daily_limit
+            logger.info("Stage 2 batch complete")
+        except Exception as exc:
+            logger.error("Stage 2 batch error: %s", exc)
+            raise
         finally:
             with self._lock:
                 self._status["running"] = False
             self._refresh_remaining()
 
     def _loop(self) -> None:
+        logger.info("Enrichment scheduler started — running Stage 1")
         run_stage1(self.db_path, self.cfg)
+        logger.info("Stage 2 scheduled daily at 02:00")
         schedule.every().day.at("02:00").do(self._run_batch)
         while True:
             schedule.run_pending()

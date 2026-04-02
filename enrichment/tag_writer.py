@@ -1,9 +1,12 @@
 # enrichment/tag_writer.py
+import logging
 from pathlib import Path
 
 from mutagen import File as MutagenFile
 from mutagen.easyid3 import EasyID3
 from mutagen.id3 import ID3NoHeaderError
+
+logger = logging.getLogger(__name__)
 
 
 class TagWriteError(Exception):
@@ -47,12 +50,15 @@ def write_tags(file_path: str, tags: dict) -> None:
     except Exception as exc:
         raise TagWriteError(f"Cannot open {file_path}: {exc}") from exc
 
+    written = {}
     for field, value in tags.items():
         easy_key = _EASY_FIELD_MAP.get(field)
         if easy_key and value is not None:
             audio[easy_key] = [str(value)]
+            written[field] = value
 
     try:
         audio.save(file_path)
+        logger.info("Tags written: %s fields=%s", Path(file_path).name, written)
     except Exception as exc:
         raise TagWriteError(f"Cannot save {file_path}: {exc}") from exc

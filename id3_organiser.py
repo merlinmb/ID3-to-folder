@@ -13,11 +13,13 @@ Usage:
 import csv
 import io
 import json
+import logging
 import os
 import queue
 import re
 import shutil
 import sqlite3
+import sys
 import threading
 import webbrowser
 from datetime import datetime
@@ -513,11 +515,31 @@ def api_update_track(track_id: int):
     if not updates:
         return jsonify({"error": "nothing to update"}), 400
 
+    # Scrub placeholder tags before storing
+    for field in ("artist", "album", "title"):
+        if field in updates:
+            updates[field] = _scrub(updates[field])
+
+    # Recalculate destination when any tag metadata changes
+    tag_fields = {"artist", "album", "title", "track_number"}
+    if tag_fields & set(updates.keys()):
+        with _get_db() as conn:
+            row = conn.execute(
+                "SELECT original_path, artist, album, title, track_number FROM tracks WHERE id = ?",
+                (track_id,)
+            ).fetchone()
+        if row:
+            merged = dict(row)
+            merged.update(updates)
+            dest, is_matched = _calculate_destination(merged, merged["original_path"])
+            updates["destination_path"] = dest
+            updates["matched"] = 1 if is_matched else 0
+
     set_sql = ", ".join(f"{k} = ?" for k in updates)
     values  = list(updates.values()) + [track_id]
     with _get_db() as conn:
-        conn.execute(f"UPDATE tracks SET {set_sql} WHERE id = ?", values)
-    return jsonify({"ok": True})
+        conn.execute(f"UPDATE tracks SET {set_sql}, status = 'pending' WHERE id = ?", values)
+    return jsonify({"ok": True, "destination_path": updates.get("destination_path")})
 
 
 @app.route("/api/stats")
@@ -833,13 +855,17 @@ def api_enrich_apply():
                 meta = {**tags, "track_number": None}
                 dest, is_matched = _calculate_destination(meta, src)
                 now = datetime.now().isoformat()
+                # Only mark 'enriched' when the track is fully matched.
+                # If still unmatched (e.g. heuristic had no album), keep
+                # 'review_needed' so Stage 2 (MusicBrainz) can still pick it up.
+                new_enrich_status = 'enriched' if is_matched else 'review_needed'
                 with _get_db() as conn:
                     conn.execute(
                         "UPDATE tracks SET artist=?, album=?, title=?, year=?, "
-                        "destination_path=?, matched=?, enrichment_status='enriched', "
-                        "tags_written_at=? WHERE id=?",
+                        "destination_path=?, matched=?, enrichment_status=?, "
+                        "status='pending', tags_written_at=? WHERE id=?",
                         (tags["artist"], tags["album"], tags["title"], tags.get("year"),
-                         dest, 1 if is_matched else 0, now, tid)
+                         dest, 1 if is_matched else 0, new_enrich_status, now, tid)
                     )
                     conn.execute(
                         "UPDATE enrichment_candidates SET status='applied' WHERE id=?", (cid,)
@@ -914,6 +940,13 @@ def main(port: int, db: str, daily_limit: int, claude_limit: int,
     Scans /input, moves matched tracks to /destination,
     and enriches unmatched tracks via heuristics / MusicBrainz / Claude.
     """
+    logging.basicConfig(
+        stream=sys.stdout,
+        level=logging.INFO,
+        format="%(asctime)s [%(name)s] %(levelname)s %(message)s",
+        datefmt="%Y-%m-%dT%H:%M:%S",
+    )
+
     global _enrichment_scheduler
     _config["db_path"] = db
 
